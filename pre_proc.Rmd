@@ -1,0 +1,25 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+```
+
+load data from HHS - COVID-19 Reported Patient Impact and Hospital Capacity by Facility
+https://healthdata.gov/Hospital/COVID-19-Reported-Patient-Impact-and-Hospital-Capa/anag-cw7u
+The following dataset provides facility-level data for hospital utilization aggregated on a weekly basis (Friday to Thursday). These are derived from reports with facility-level granularity across two main sources: (1) HHS TeleTracking, and (2) reporting provided directly to HHS Protect by state/territorial health departments on behalf of their healthcare facilities.
+
+```{r}
+facility <- read.csv('data/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility.csv')
+```
+
+Aggregate by state
+```{r}
+state <- facility %>%
+  group_by(state) %>%
+  summarise()
+```
+
+
