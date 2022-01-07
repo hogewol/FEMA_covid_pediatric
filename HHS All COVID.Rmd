@@ -1,0 +1,631 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(zoo)
+library(readxl)
+library(lubridate)
+
+theme_set(theme_bw() + theme( legend.position="bottom" ) +
+             theme( text = element_text(size=16, face="bold")) +
+            theme(axis.text.x=element_text(angle=60, hjust=1)))
+
+R1states <- c('CT', 'MA', 'ME', 'NH', 'RI', 'VT') # FEMA Region 1
+R2states <- c('NY', 'NJ', 'PR')
+R3states <- c('DE', 'DC', 'MD', 'PA', 'VA', 'WV')
+R4states <- c('AL', 'FL', 'GA', 'KY', 'MS', 'NC', 'SC', 'TN') # Region 4
+R5states <- c('IL', 'IN', 'MI', 'MN', 'OH', 'WI')
+R6states <- c('TX', 'AR', 'LA', 'NM', 'OK')
+R7states <- c('IA', 'KS', 'MO', 'NE', '')
+R8states <- c('CO', 'MT', 'ND', 'SD', 'UT', 'WY')
+R9states <- c('AZ', 'CA', 'HI', 'NV') # Some Islands Missing Abriviations
+R10states <- c('AK', 'ID', 'OR', 'WA')
+
+Selectstates <- c('FL', 'MS', 'TX', 'CA') # Non-New England States to Compare
+```
+
+
+```{r}
+df_population <- read_excel('data/Population in New England States.xlsx')
+```
+
+Clean up/Select Data
+```{r}
+df_population$state <- state.abb[match(df_population$`State Name`, state.name)]
+
+df_population <- df_population %>%
+  mutate(region = case_when(
+    state %in% R1states ~ "Region 1"
+    ))
+
+df_population_r <- df_population %>%
+  group_by(region) %>%
+  summarise(
+    Population = sum(Population, na.rm = TRUE)
+    , .groups = 'keep'
+  )  
+
+```
+
+
+```{r}
+df_population <- read_excel('data/NST-EST2021-POP.xlsx', range = 'A10:D60', col_names = c('State Name', 'x1', 'x2', 'Population'))
+```
+
+Clean up/Select Data
+```{r}
+df_population$`State Name` <- gsub(".", "", as.character(df_population$`State Name`), fixed = TRUE)
+df_population$state <- state.abb[match(df_population$`State Name`, state.name)]
+
+df_population <- df_population %>%
+  mutate(region = case_when(
+    state %in% R1states ~ "Region 1"
+    ))
+
+df_population_r <- df_population %>%
+  group_by(region) %>%
+  summarise(
+    Population = sum(Population, na.rm = TRUE)
+    , .groups = 'keep'
+  )  
+
+```
+
+```{r}
+NEstfips <- c('09','25','23','33','44','50', '36') # FIPS of states in New England + NY
+#hrrnums <- c(109,110,111,221,222,227,230,231,281,282,295,364,424)
+
+# truth URL from the CDC ensemble 
+turl <- 'https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
+df <- read.csv( turl ) %>% tidyr::pivot_longer( cols = starts_with("X")
+                                  , names_to="date", names_prefix="X"
+                                  , values_to = "value",  values_drop_na = TRUE ) %>%
+              mutate( date=as.Date(gsub("\\.","\\/",date), format="%m/%d/%y")
+                      , location=sprintf("%05d", FIPS) ) %>%
+              filter( substr(location, start=1, stop=2) %in% NEstfips )
+```
+
+
+```{r}
+cases_by_state <- df %>%
+  group_by(Province_State, date) %>%
+  summarise(
+    cases = sum(value, na.rm = TRUE)
+    , .groups = 'keep'
+  )
+
+daily_cases_by_state <- cases_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_cases = cases - lag(cases, default = first(cases), order_by = date)
+    )
+
+daily_cases_by_state_rates <- cases_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_cases = cases - lag(cases, default = first(cases), order_by = date)
+    )
+
+daily_cases_by_state <- daily_cases_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_cases = rollmean(daily_cases, k=7, fill = NA)
+    )
+
+daily_cases_by_state$state <- state.abb[match(daily_cases_by_state$Province_State, state.name)]
+daily_cases_by_state <- rename(daily_cases_by_state, collection_date = date)
+daily_cases_by_state <- daily_cases_by_state[ , -1]
+```
+
+
+load data from HHS Protect obtained by Jeff Cegan
+```{r}
+df_raw <- read.csv('data/[Unified] Hospital Analytic.csv') 
+```
+
+```{r}
+facility <- df_raw %>%
+  mutate(collection_date = as.Date(collection_date))
+```
+
+Checking Deaths in CT
+```{r}
+sanity_check <- df_raw %>%
+  filter(state == 'CT') %>%
+  summarise(
+    #covid_deaths = sum(deaths_covid, na.rm = TRUE)
+    deaths_covid
+    , collection_date
+    , hospital_name
+  )
+```
+
+
+```{r}
+summary(facility %>%
+  select(hospital_pk, collection_date, total_beds, inpatient_beds, total_icu_beds)
+  )
+```
+
+
+Look at last year's staffing shortages
+```{r}
+temp_prev <- facility %>%
+  filter(state %in% R1states & collection_date == '2020-12-09')
+
+table(temp_prev$critical_staffing_shortage_today)
+table(temp_prev$critical_staffing_shortage_anticipated_within_week)
+
+crit_shortage_hosp_prev <- temp_prev %>%
+  filter(critical_staffing_shortage_today == 'true')
+
+crit_shortage_hosp_week_prev <- temp_prev %>%
+  filter(critical_staffing_shortage_anticipated_within_week == 'true')
+
+crit_shortage_hosp_day_or_week_prev <- temp_prev %>%
+  filter(critical_staffing_shortage_anticipated_within_week == 'true' | critical_staffing_shortage_today == 'true')
+
+inner_join(crit_shortage_hosp_prev, crit_shortage_hosp_week_prev, by = "ccn")
+```
+
+Look at this year's staffing shortages
+```{r}
+temp <- facility %>%
+  filter(state %in% R1states & collection_date == '2021-12-27')
+
+table(temp$critical_staffing_shortage_today)
+table(temp$critical_staffing_shortage_anticipated_within_week)
+
+crit_shortage_hosp <- temp %>%
+  filter(critical_staffing_shortage_today == 'true')
+
+crit_shortage_hosp_week <- temp %>%
+  filter(critical_staffing_shortage_anticipated_within_week == 'true')
+
+crit_shortage_hosp_day_or_week <- temp %>%
+  filter(critical_staffing_shortage_anticipated_within_week == 'true' | critical_staffing_shortage_today == 'true')
+
+inner_join(crit_shortage_hosp, crit_shortage_hosp_week, by = "ccn")
+```
+
+See the common hospitals who have and are expecting shortages
+```{r}
+common_hosp <- inner_join(crit_shortage_hosp_day_or_week, crit_shortage_hosp_day_or_week_prev, by = "ccn")
+#inner_join(crit_shortage_hosp_day_or_week, crit_shortage_hosp_day_or_week_prev, by = "ccn")
+#inner_join(crit_shortage_hosp_day_or_week, crit_shortage_hosp_day_or_week_prev, by = "hospital_name")
+```
+
+Save Excel Sheet of staffing shortages
+```{r}
+fname1 <- paste0('2021-12-27_staff_shortage.xlsx')
+
+openxlsx::write.xlsx( 
+              crit_shortage_hosp_day_or_week %>% select(hospital_name, state, county, zip, critical_staffing_shortage_today, critical_staffing_shortage_anticipated_within_week)
+              , fname1 )
+
+```
+
+State Loop! For staffing shortages (track by state)
+```{r}
+for (state_abbrv in R1states){
+  tempState <- facility %>%
+  filter(state %in% state_abbrv & collection_date == '2021-12-27')
+
+  print(state_abbrv)
+  print(table(tempState$critical_staffing_shortage_today))
+  print(table(tempState$critical_staffing_shortage_anticipated_within_week))
+
+  crit_shortage_hospState <- tempState %>%
+    filter(critical_staffing_shortage_today == 'true')
+
+  crit_shortage_hosp_weekState <- tempState %>%
+    filter(critical_staffing_shortage_anticipated_within_week == 'true')
+
+  crit_shortage_hosp_day_or_weekState <- tempState %>%
+    filter(critical_staffing_shortage_anticipated_within_week == 'true' | critical_staffing_shortage_today == 'true')
+
+  print(inner_join(crit_shortage_hospState, crit_shortage_hosp_weekState, by = "ccn"))
+  
+}
+
+```
+
+
+Aggregate by state
+```{r}
+state_d <- facility %>%
+  group_by(state, collection_date) %>%
+  summarise(
+            total_all_beds = sum(total_beds, na.rm = TRUE)
+            , inpatient_all_beds = sum(inpatient_beds, na.rm = TRUE)
+            , icu_all_beds = sum(total_icu_beds, na.rm = TRUE)
+            , total_child_beds = total_all_beds - sum(all_adult_hospital_beds, na.rm = TRUE)
+            , inpatient_child_beds = inpatient_all_beds - sum(all_adult_hospital_inpatient_beds, na.rm = TRUE)
+            , icu_child_beds = icu_all_beds - sum(total_staffed_adult_icu_beds, na.rm = TRUE)
+            , inpatient_all_beds_used = sum(inpatient_beds_used, na.rm = TRUE)
+            , inpatient_child_beds_used = inpatient_all_beds_used - sum(all_adult_hospital_inpatient_bed_occupied, na.rm = TRUE)
+            , icu_all_beds_used = sum(icu_beds_used, na.rm = TRUE)
+            , icu_child_beds_used = icu_all_beds_used - sum(staffed_adult_icu_bed_occupancy, na.rm = TRUE)
+            , total_child_beds_used_covid_confirmed = sum(total_pediatric_patients_hospitalized_confirmed_covid, na.rm = TRUE)
+            , total_child_beds_used_covid = sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , total_all_beds_used_covid = total_child_beds_used_covid + sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , admission_child_covid_confirmed = sum(previous_day_admission_pediatric_covid_confirmed, na.rm = TRUE)
+            , admission_child_covid = admission_child_covid_confirmed +
+                                            sum(previous_day_admission_pediatric_covid_suspected, na.rm = TRUE)
+            , admission_all_covid = admission_child_covid 
+                                        + sum(previous_day_admission_adult_covid_suspected 
+                                              + previous_day_admission_adult_covid_confirmed
+                                              , na.rm = TRUE)
+            , admission_confirmed_covid = admission_child_covid_confirmed 
+                                        + sum(previous_day_admission_adult_covid_confirmed, na.rm = TRUE)
+            , non_child_covid_utilization = ((icu_all_beds_used + inpatient_all_beds_used) - total_child_beds_used_covid)/total_all_beds
+            , total_utilization = (inpatient_all_beds_used)/total_all_beds
+            , covid_deaths = sum(deaths_covid, na.rm = TRUE)
+            , staffing_shortage_yes = sum(critical_staffing_shortage_today == 'true', na.rm = TRUE)
+            , total_hosp_reporting = n()
+            , .groups = 'keep')
+
+# moving average of the variables above
+state_ma <- state_d[order(state_d$state, state_d$collection_date),] %>%
+  group_by(state) %>%
+  mutate(
+            total_all_beds = rollmean(total_all_beds, k=7, fill=NA)
+            , inpatient_all_beds = rollmean(inpatient_all_beds, k=7, fill=NA)
+            , icu_all_beds = rollmean(icu_all_beds, k=7, fill=NA)
+            , total_child_beds = rollmean(total_child_beds, k=7, fill=NA)
+            , inpatient_child_beds = rollmean(inpatient_child_beds, k=7, fill=NA)
+            , icu_child_beds = rollmean(icu_child_beds, k=7, fill=NA)
+            , total_all_beds_used_covid = rollmean(total_all_beds_used_covid, k=7, fill=NA)
+            , total_child_beds_used_covid_confirmed = rollmean(total_child_beds_used_covid_confirmed, k=7, fill=NA)
+            , total_child_beds_used_covid = rollmean(total_child_beds_used_covid, k=7, fill=NA)
+            , admission_all_covid = rollmean(admission_all_covid, k=7, fill=NA)
+            , admission_child_covid_confirmed = rollmean(admission_child_covid_confirmed, k=7, fill=NA)
+            , admission_child_covid = rollmean(admission_child_covid, k=7, fill=NA)
+            , non_child_covid_utilization = rollmean(non_child_covid_utilization, k=7, fill=NA)
+            , total_utilization = rollmean(total_utilization, k=7, fill=NA)
+            , covid_deaths = rollmean(covid_deaths, k=7, fill=NA)
+            ) 
+
+state <- state_ma %>%
+  pivot_longer(cols = -c(state, collection_date)
+               , names_pattern = "(...*)_(...*)_beds", names_to = c("bedtype", "scope")) %>%
+  mutate(bedtype=ifelse(bedtype=="", "value", bedtype)) 
+# %>%  pivot_wider(names_from = 'scope', values_from = 'value')
+```
+
+Aggregate by Region
+```{r}
+region_d <- facility %>%
+  group_by(fema_region, collection_date) %>%
+  summarise(
+            total_all_beds = sum(total_beds, na.rm = TRUE)
+            , inpatient_all_beds = sum(inpatient_beds, na.rm = TRUE)
+            , icu_all_beds = sum(total_icu_beds, na.rm = TRUE)
+            , total_child_beds = total_all_beds - sum(all_adult_hospital_beds, na.rm = TRUE)
+            , inpatient_child_beds = inpatient_all_beds - sum(all_adult_hospital_inpatient_beds, na.rm = TRUE)
+            , icu_child_beds = icu_all_beds - sum(total_staffed_adult_icu_beds, na.rm = TRUE)
+            , inpatient_all_beds_used = sum(inpatient_beds_used, na.rm = TRUE)
+            , inpatient_child_beds_used = inpatient_all_beds_used - sum(all_adult_hospital_inpatient_bed_occupied, na.rm = TRUE)
+            , icu_all_beds_used = sum(icu_beds_used, na.rm = TRUE)
+            , icu_child_beds_used = icu_all_beds_used - sum(staffed_adult_icu_bed_occupancy, na.rm = TRUE)
+            , total_child_beds_used_covid_confirmed = sum(total_pediatric_patients_hospitalized_confirmed_covid, na.rm = TRUE)
+            , total_child_beds_used_covid = sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , total_all_beds_used_covid = total_child_beds_used_covid + sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , admission_child_covid_confirmed = sum(previous_day_admission_pediatric_covid_confirmed, na.rm = TRUE)
+            , admission_child_covid = admission_child_covid_confirmed +
+                                            sum(previous_day_admission_pediatric_covid_suspected, na.rm = TRUE)
+            , admission_all_covid = admission_child_covid 
+                                        + sum(previous_day_admission_adult_covid_suspected 
+                                              + previous_day_admission_adult_covid_confirmed
+                                              , na.rm = TRUE)
+            , non_child_covid_utilization = ((icu_all_beds_used + inpatient_all_beds_used) - total_child_beds_used_covid)/total_all_beds
+            , total_utilization = (inpatient_all_beds_used)/total_all_beds
+            , covid_deaths = sum(deaths_covid, na.rm = TRUE)
+            , staffing_shortage_yes = sum(critical_staffing_shortage_today == 'yes', na.rm = TRUE)
+            , total_hosp_reporting = n()
+            , .groups = 'keep')
+
+# moving average of the variables above
+region_ma <- region_d[order(region_d$fema_region, region_d$collection_date),] %>%
+  group_by(fema_region) %>%
+  mutate(
+            total_all_beds = rollmean(total_all_beds, k=7, fill=NA)
+            , inpatient_all_beds = rollmean(inpatient_all_beds, k=7, fill=NA)
+            , icu_all_beds = rollmean(icu_all_beds, k=7, fill=NA)
+            , total_child_beds = rollmean(total_child_beds, k=7, fill=NA)
+            , inpatient_child_beds = rollmean(inpatient_child_beds, k=7, fill=NA)
+            , icu_child_beds = rollmean(icu_child_beds, k=7, fill=NA)
+            , total_all_beds_used_covid = rollmean(total_all_beds_used_covid, k=7, fill=NA)
+            , total_child_beds_used_covid_confirmed = rollmean(total_child_beds_used_covid_confirmed, k=7, fill=NA)
+            , total_child_beds_used_covid = rollmean(total_child_beds_used_covid, k=7, fill=NA)
+            , admission_all_covid = rollmean(admission_all_covid, k=7, fill=NA)
+            , admission_child_covid_confirmed = rollmean(admission_child_covid_confirmed, k=7, fill=NA)
+            , admission_child_covid = rollmean(admission_child_covid, k=7, fill=NA)
+            , non_child_covid_utilization = rollmean(non_child_covid_utilization, k=7, fill=NA)
+            , total_utilization = rollmean(total_utilization, k=7, fill=NA)
+            , covid_deaths = rollmean(covid_deaths, k=7, fill=NA)
+            ) 
+
+region <- region_ma %>%
+  pivot_longer(cols = -c(fema_region, collection_date)
+               , names_pattern = "(...*)_(...*)_beds", names_to = c("bedtype", "scope")) %>%
+  mutate(bedtype=ifelse(bedtype=="", "value", bedtype)) 
+# %>%  pivot_wider(names_from = 'scope', values_from = 'value')
+```
+
+
+State Level Weekly Average Data for the Rates
+```{r}
+daily_cases_by_state_rates <- daily_cases_by_state_rates %>%
+  group_by(Province_State) %>%
+  mutate(
+    week_year = paste(week(date), year(date), sep=" ")   
+    )
+
+daily_cases_by_state_rates$state <- state.abb[match(daily_cases_by_state_rates$Province_State, state.name)]
+daily_cases_by_state_rates <- rename(daily_cases_by_state_rates, collection_date = date)
+daily_cases_by_state_rates <- daily_cases_by_state_rates[ , -1]
+
+state_ma_rates <- state_d[order(state_d$state, state_d$collection_date),] %>%
+  group_by(state) %>%
+  mutate(
+    week_year = paste(week(collection_date), year(collection_date), sep=" ")
+            ) 
+
+daily_cases_hosp_rates_full <- state_ma_rates %>%
+  full_join(daily_cases_by_state_rates, by = c("state","collection_date"))
+
+daily_cases_hosp_rates_full <- daily_cases_hosp_rates_full %>%
+  group_by(state, week_year.y) %>%
+  summarise(
+    weekly_cases = mean(daily_cases, na.rm = TRUE)
+    , weekly_all_covid_admissions = mean(admission_all_covid, na.rm = TRUE)
+    , weekly_confirmed_covid_admissions = mean(admission_confirmed_covid, na.rm = TRUE)
+    , weekly_covid_deaths = mean(covid_deaths, na.rm = TRUE)
+    , date = first(collection_date)
+    , lag_cases = lag(weekly_cases, default = first(weekly_cases), k=2)
+    , lag_cases_death = lag(weekly_cases, default = first(weekly_cases), k=4)
+    , .groups = 'keep'
+            ) 
+
+```
+
+
+Staffing Shortage Graph
+```{r, fig.height=4}
+state_d %>%
+  filter( state %in% R1states & collection_date > '2020-09-01' & collection_date < '2022-01-04') %>%
+  mutate(r = staffing_shortage_yes/total_hosp_reporting) %>%
+  ggplot(aes(x = collection_date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_smooth(color = "blue", size = 1, span = 0.3) +
+    labs(x = NULL, y = 'Percent of Hospitals Reporting Shortages', title = 'Hospital Staffing Shortages') +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), '2 months'), date_labels = "%b %d %Y") +
+    scale_y_continuous(labels=scales::percent #, limits = c(0, 1)
+                       )
+```
+
+```{r}
+max(state_d$collection_date)
+# str(state_d)
+```
+
+Join HHS and Census Data
+```{r}
+state_ma <- state_ma %>%
+  full_join(df_population, by = "state")
+```
+
+* POWER POINT Graph *
+Case Incidence per 100,000 Ppl
+```{r, fig.height=4}
+state_ma %>%
+  filter( state %in% R1states & collection_date > '2021-12-14') %>%
+  mutate(r = (admission_all_covid/Population)*100000) %>%
+  ggplot(aes(x = collection_date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Hospitalizations', title = 'COVID-19 Daily Hospital Admissions per 100,000 People,\n 7-day moving average') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+```
+
+Join HHS and Case Data
+```{r}
+daily_cases_hosp <- state_ma %>%
+  full_join(daily_cases_by_state, by = c("state","collection_date"))
+```
+
+
+
+```{r}
+daily_cases_hosp_rates_full %>%
+  filter(state %in% R1states & date > '2021-12-01') %>%
+  mutate(r = (weekly_covid_deaths/lag_cases_death)) %>%
+  group_by(state) %>%
+  summarise(
+    mean_rate = mean(r)
+  )
+```
+
+
+
+
+Case Numbers (all, not just hospitalizations)
+```{r, fig.height=4}
+daily_cases_hosp %>%
+  filter(state %in% R1states & collection_date > '2020-09-01' & collection_date < '2022-01-05') %>%
+  mutate(r = (daily_cases/Population)*100000) %>%
+  ggplot(aes(x = collection_date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Cases', title = 'COVID-19 Daily Cases per 100,000 People,\n 7-day moving average') +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), '2 months'), date_labels = "%b %d %Y")
+```
+```{r}
+daily_cases_hosp %>% 
+  filter(state %in% R1states) %>%
+  drop_na(daily_cases) %>%
+  group_by(state) %>%
+  mutate(max_collection_date = max(collection_date), r = (daily_cases/Population)*100000) %>%
+  filter(collection_date == max_collection_date) %>%
+  # filter(collection_date == '2021-12-27') %>%
+  select(state, collection_date, r)
+```
+
+
+COVID admissions are confirmed and suspected
+Hospitalization Rate
+```{r, fig.height=4}
+daily_cases_hosp_rates_full %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = (weekly_confirmed_covid_admissions/lag_cases)*100) %>%
+  filter(r < 200) %>%
+  ggplot(aes(x = date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'Percent', title = 'Confirmed COVID-19 Hospitalization Rate,\n 14-day moving average with a 2 week case lag') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+```
+
+COVID admissions are confirmed only
+Hospitalization Rate
+```{r, fig.height=4}
+daily_cases_hosp_rates_full %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = (weekly_all_covid_admissions/lag_cases)*100) %>%
+  filter(r < 200) %>%
+  ggplot(aes(x = date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'Percent', title = 'Confirmed COVID-19 Hospitalization Rate,\n Weely Average with a 2 week case lag') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+```
+
+
+```{r}
+daily_cases_hosp_rates_full %>%
+  filter(state %in% R1states & date > '2021-12-01' ) %>% #& date < '2021-10-01'
+  mutate(r = (weekly_confirmed_covid_admissions/lag_cases)*100) %>%
+  filter(r < 200) %>%
+  group_by(state) %>%
+  summarise(
+    mean_rate = mean(r)
+  )
+```
+
+
+
+Join HHS and Census Data
+```{r}
+region_ma <- region_ma %>%
+  full_join(df_population_r, by = c("fema_region" = "region"))
+```
+
+* POWER POINT Stat*
+Admissions Incidence per 100,000 People, Regionally
+```{r, fig.height=4}
+region_ma %>%
+  filter(fema_region %in% c("Region 1") & collection_date > '2020-12-14' & collection_date < '2020-12-30') %>% #& collection_date < '2020-12-25'
+  mutate(r = (admission_all_covid/Population)*100000)
+```
+
+
+Aggregate by Date
+```{r}
+us_d <- facility %>%
+  group_by(collection_date) %>%
+  summarise(
+            total_child_beds_used_covid = sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , total_all_beds_used_covid = total_child_beds_used_covid + sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , admission_child_covid_confirmed = sum(previous_day_admission_pediatric_covid_confirmed, na.rm = TRUE)
+            , admission_child_covid = admission_child_covid_confirmed +
+                                            sum(previous_day_admission_pediatric_covid_suspected, na.rm = TRUE)
+            , admission_all_covid = admission_child_covid 
+                                        + sum(previous_day_admission_adult_covid_suspected 
+                                              + previous_day_admission_adult_covid_confirmed
+                                              , na.rm = TRUE)
+            , covid_deaths = sum(deaths_covid, na.rm = TRUE)
+            , .groups = 'keep')
+
+# moving average of the variables above
+us_ma <- us_d[order(us_d$collection_date),] %>%
+  ungroup() %>%
+  mutate(
+            total_all_beds_used_covid = rollmean(total_all_beds_used_covid, k=7, fill=NA)
+            , total_child_beds_used_covid = rollmean(total_child_beds_used_covid, k=7, fill=NA)
+            , admission_all_covid = rollmean(admission_all_covid, k=7, fill=NA)
+            , admission_child_covid_confirmed = rollmean(admission_child_covid_confirmed, k=7, fill=NA)
+            , admission_child_covid = rollmean(admission_child_covid, k=7, fill=NA)
+            , covid_deaths = rollmean(covid_deaths, k=7, fill=NA)
+            ) 
+
+```
+
+
+```{r}
+us_ma %>%
+  filter(collection_date > '2021-12-14') %>%
+  mutate(r = (admission_all_covid / 329500000)*100000)
+```
+
+```{r}
+us_ma %>%
+  filter(collection_date > '2020-12-17' & collection_date < '2020-12-23') %>%
+  mutate(r = (covid_deaths / 329500000)*100000)
+```
+
+
+
+
+See the latest report date and review col's when needed
+```{r}
+max(facility$collection_date)
+#colnames(facility)
+#temp$staffing_shortage_details
+```
+
+
+
+Code that is being retired
+-----------------------------------------------
+NOT USING THIS SOURCE ANYMORE
+Deaths
+```{r, fig.height=4}
+daily_cases_hosp %>%
+  filter(state %in% R1states & collection_date > '2020-09-01') %>%
+  mutate(r = (covid_deaths/Population)*100000) %>%
+  ggplot(aes(x = collection_date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Deaths', title = 'COVID-19 Daily Deaths per 100,000 People,\n 7-day moving average') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y") 
+```
+
+NOT USING THIS SOURCE ANYMORE
+Death Rate
+```{r, fig.height=4}
+daily_cases_hosp_rates_full %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = weekly_covid_deaths/lag_cases_death) %>%
+  ggplot(aes(x = date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Deaths/Cases', title = 'COVID-19 Death Rate,\n Weely Average with a 4 week case lag') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y") 
+```
+
+
+
+

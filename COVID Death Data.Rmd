@@ -1,0 +1,138 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(zoo)
+library(readxl)
+
+theme_set(theme_bw() + theme( legend.position="bottom" ) +
+             theme( text = element_text(size=16, face="bold")) +
+            theme(axis.text.x=element_text(angle=60, hjust=1)))
+
+R1states <- c('CT', 'MA', 'ME', 'NH', 'RI', 'VT') # FEMA Region 1
+```
+
+
+Import Population Data
+```{r}
+df_population <- read_excel('data/Population in New England States.xlsx')
+```
+
+Clean up/Select Data
+```{r}
+df_population$state <- state.abb[match(df_population$`State Name`, state.name)]
+
+df_population <- df_population %>%
+  mutate(region = case_when(
+    state %in% R1states ~ "Region 1"
+    ))
+
+df_population_r <- df_population %>%
+  group_by(region) %>%
+  summarise(
+    Population = sum(Population, na.rm = TRUE)
+    , .groups = 'keep'
+  )  
+
+```
+
+Import Death Data
+```{r}
+NEstfips <- c('09','25','23','33','44','50', '36') # FIPS of states in New England + NY
+#hrrnums <- c(109,110,111,221,222,227,230,231,281,282,295,364,424)
+
+turl <- 'https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv'
+deaths_jhu <- read.csv( turl ) %>% tidyr::pivot_longer( cols = starts_with("X")
+                                  , names_to="date", names_prefix="X"
+                                  , values_to = "value",  values_drop_na = TRUE ) %>%
+              mutate( date=as.Date(gsub("\\.","\\/",date), format="%m/%d/%y")
+                      , location=sprintf("%05d", FIPS) ) %>%
+              filter( substr(location, start=1, stop=2) %in% NEstfips )
+```
+
+```{r}
+deaths_by_state <- deaths_jhu %>%
+  group_by(Province_State, date) %>%
+  summarise(
+    covid_deaths = sum(value, na.rm = TRUE)
+    , .groups = 'keep'
+  )
+
+daily_deaths_by_state <- deaths_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_deaths = covid_deaths - lag(covid_deaths, default = first(covid_deaths), order_by = date)
+    )
+
+daily_deaths_by_state_rates <- deaths_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_deaths = covid_deaths - lag(covid_deaths, default = first(covid_deaths), order_by = date)
+    )
+
+daily_deaths_by_state_ma <- daily_deaths_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_deaths = rollmean(daily_deaths, k=7, fill = NA)
+    )
+
+daily_deaths_by_state_ma$state <- state.abb[match(daily_deaths_by_state_ma$Province_State, state.name)]
+daily_deaths_by_state_ma <- rename(daily_deaths_by_state_ma, collection_date = date)
+daily_deaths_by_state_ma <- daily_deaths_by_state_ma[ , -1]
+```
+
+
+
+```{r}
+daily_deaths_by_state_rates <- daily_deaths_by_state_rates %>%
+  group_by(Province_State) %>%
+  mutate(
+    week_year = paste(week(date), year(date), sep=" ")   
+    )
+
+daily_deaths_by_state_rates$state <- state.abb[match(daily_deaths_by_state_rates$Province_State, state.name)]
+daily_deaths_by_state_rates <- rename(daily_deaths_by_state_rates, collection_date = date)
+daily_deaths_by_state_rates <- daily_deaths_by_state_rates[ , -1]
+
+#join with census data
+daily_deaths_by_state_rates_with_pop <- daily_deaths_by_state_rates %>%
+  full_join(df_population, by = "state")
+
+daily_deaths_rates_full <- daily_deaths_by_state_rates_with_pop %>%
+  group_by(state, week_year) %>%
+  summarise(
+    weekly_deaths = mean(daily_deaths, na.rm = TRUE)
+    , date = first(collection_date)
+    #, lag_cases_death = lag(weekly_cases, default = first(weekly_cases), k=4)
+    , population = first(Population)
+    , .groups = 'keep'
+            ) 
+```
+
+
+
+
+
+```{r, fig.height=4}
+daily_deaths_rates_full %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = (weekly_deaths/population)*100000) %>%
+  ggplot(aes(x = date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Deaths', title = 'COVID-19 Weekly Deaths per 100,000 People') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+```
+
+
+
+NEED to do connect to cases to calculate death rate
+
+
+

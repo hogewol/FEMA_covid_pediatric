@@ -1,0 +1,75 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+theme_set( theme_bw() + theme( legend.position="bottom" ) +
+             theme( text = element_text(size=14) ) )
+```
+
+load data from HHS - COVID-19 Reported Patient Impact and Hospital Capacity by Facility
+https://healthdata.gov/Hospital/COVID-19-Reported-Patient-Impact-and-Hospital-Capa/anag-cw7u
+The following dataset provides facility-level data for hospital utilization aggregated on a weekly basis (Friday to Thursday). These are derived from reports with facility-level granularity across two main sources: (1) HHS TeleTracking, and (2) reporting provided directly to HHS Protect by state/territorial health departments on behalf of their healthcare facilities.
+
+```{r}
+facility <- read.csv('data/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility.csv'
+                   , na.strings = '-999999') %>%
+  mutate(collection_week = as.Date(collection_week))
+```
+
+```{r}
+sample(unique(facility$hospital_pk), size = 20)
+```
+
+Plot timeseries of individual hospital
+```{r}
+pk <- '110129'
+facility %>%
+  pivot_longer(c(total_beds_7_day_avg, inpatient_beds_7_day_avg, total_icu_beds_7_day_avg)) %>%
+  filter( hospital_pk == pk) %>%
+  ggplot(aes(x = collection_week, y = value, color = name)) +
+    geom_jitter(height = 0)
+```
+```{r}
+summary(facility %>%
+  select(hospital_pk, collection_week, total_beds_7_day_avg, inpatient_beds_7_day_avg, total_icu_beds_7_day_avg)
+  )
+```
+
+Aggregate by state
+```{r}
+state <- facility %>%
+  group_by(state, collection_week) %>%
+  summarise(
+            total_all_beds = sum(total_beds_7_day_avg, na.rm = TRUE)
+            , inpatient_all_beds = sum(inpatient_beds_7_day_avg, na.rm = TRUE)
+            , icu_all_beds = sum(total_icu_beds_7_day_avg, na.rm = TRUE)
+            , total_child_beds = total_all_beds - sum(all_adult_hospital_beds_7_day_avg, na.rm = TRUE)
+            , inpatient_child_beds = inpatient_all_beds - sum(all_adult_hospital_inpatient_beds_7_day_avg, na.rm = TRUE)
+            , icu_child_beds = icu_all_beds - sum(total_staffed_adult_icu_beds_7_day_avg, na.rm = TRUE)
+#            , previous_day_admission_pediatric_covid_confirmed_7_day_sum = 
+#            , previous_day_admission_pediatric_covid_confirmed_7_day_coverage = 
+#            , previous_day_admission_pediatric_covid_suspected_7_day_coverage
+            , .groups = 'keep') %>%
+  pivot_longer(cols = -c(state, collection_week)
+               , names_pattern = "(...*)_(...*)_beds", names_to = c("bedtype", "scope")) %>%
+  mutate(bedtype=ifelse(bedtype=="", "value", bedtype)) 
+# %>%  pivot_wider(names_from = 'scope', values_from = 'value')
+```
+
+Plot timeseries
+```{r}
+st <- 'CA'
+state %>%
+  filter( state == st) %>%
+  ggplot(aes(x = collection_week, y = value, color = bedtype)) +
+    facet_wrap(~ scope, ncol = 1, scales = 'free_y') +
+    geom_line() +
+    expand_limits(y = 0)
+```
+

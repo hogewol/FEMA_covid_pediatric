@@ -5,21 +5,250 @@ output: html_notebook
 
 ```{r}
 library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(zoo)
+
+theme_set( theme_bw() + theme( legend.position="bottom" ) +
+             theme( text = element_text(size=14) ) )
+
+R1states <- c('CT', 'MA', 'ME', 'NH', 'RI', 'VT') # FEMA Region 1
+R4states <- c('AL', 'FL', 'GA', 'KY', 'MS', 'NC', 'SC', 'TN') # Region 4
 ```
 
-load data from HHS - COVID-19 Reported Patient Impact and Hospital Capacity by Facility
-https://healthdata.gov/Hospital/COVID-19-Reported-Patient-Impact-and-Hospital-Capa/anag-cw7u
-The following dataset provides facility-level data for hospital utilization aggregated on a weekly basis (Friday to Thursday). These are derived from reports with facility-level granularity across two main sources: (1) HHS TeleTracking, and (2) reporting provided directly to HHS Protect by state/territorial health departments on behalf of their healthcare facilities.
+load data from HHS Protect obtained by Jeff Cegan
 
 ```{r}
-facility <- read.csv('data/COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_Facility.csv')
+df_raw <- read.csv('data/[Unified] Hospital Analytic.csv') 
+```
+
+```{r}
+print(names(df_raw))
+facility <- df_raw %>%
+  mutate(collection_date = as.Date(collection_date))
+```
+
+```{r, rows.print=15}
+# sample(unique(facility$hospital_pk), size = 20)
+facility %>% filter(collection_date > "2021-10-16" 
+                    & hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424)) %>%
+  group_by(hrr, collection_date) %>%
+  summarise(nrows = n()) %>%
+  spread(collection_date, nrows)
+```
+```{r}
+hrr_d <- facility %>%
+  filter(collection_date == "2021-10-20" 
+         & hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424)) %>%
+  group_by(hrr) %>% # Can add collection date here if want each HRR over time (and comment line above)
+  summarise(
+            total_COVID_patients = sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE) +
+                              sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , covid_ICU_patients = sum(staffed_icu_adult_patients_confirmed_and_suspected_covid, na.rm = TRUE)
+            , covid_general_patients = total_COVID_patients - covid_ICU_patients
+            , nonCOVID_ICU_patients = sum(icu_beds_used, na.rm = TRUE) - covid_ICU_patients
+            , total_nonCOVID_patients = sum(inpatient_beds_used, na.rm = TRUE) - total_COVID_patients
+            , nonCOVID_gen_patients = total_nonCOVID_patients - nonCOVID_ICU_patients
+            , total_gen_patients = covid_general_patients + nonCOVID_gen_patients
+            , total_ICU_patients = covid_ICU_patients + nonCOVID_ICU_patients
+            , total_patients = total_gen_patients + total_ICU_patients
+            , gen_beds = sum(inpatient_beds, na.rm = TRUE)
+            , icu_beds = sum(total_icu_beds, na.rm = TRUE)
+            , total_beds = gen_beds + icu_beds
+            , .groups = 'keep')
+fname <- paste0('/Users/aligo/Downloads/FEMA recovery data/2021-10-20_HRR_Utilization.xlsx')
+openxlsx::write.xlsx( 
+              hrr_d %>% select(hrr,covid_general_patients,covid_ICU_patients,nonCOVID_gen_patients,nonCOVID_ICU_patients
+                   ,total_COVID_patients,total_nonCOVID_patients,total_gen_patients,total_ICU_patients,total_patients
+                   ,gen_beds,icu_beds,total_beds)
+              , fname )
+
+hrr_test <- facility %>%
+  filter(collection_date == "2021-10-20" & hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424)) %>%
+  group_by(hrr) %>% # Can add collection date here if want each HRR over time (and comment line above)
+  summarise(
+            total_COVID_patients = sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE) + sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , total_nonCOVID_patients = sum(inpatient_beds_used, na.rm = TRUE) - sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE) - sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , covid_general_patients = sum(inpatient_beds_used_covid, na.rm = TRUE) - sum(staffed_icu_adult_patients_confirmed_and_suspected_covid, na.rm = TRUE)
+            , covid_ICU_patients = sum(staffed_icu_adult_patients_confirmed_and_suspected_covid, na.rm = TRUE)
+            , nonCOVID_ICU_patients = sum(icu_beds_used, na.rm = TRUE) - covid_ICU_patients
+            , nonCOVID_gen_patients = total_nonCOVID_patients - nonCOVID_ICU_patients
+            , total_gen_patients = sum(inpatient_beds_used, na.rm = TRUE) - sum(icu_beds_used, na.rm = TRUE)
+            , total_ICU_patients = covid_ICU_patients + nonCOVID_ICU_patients
+            , total_patients = total_gen_patients + total_ICU_patients
+            , gen_beds = sum(inpatient_beds, na.rm = TRUE)
+            , icu_beds = sum(total_icu_beds, na.rm = TRUE)
+            , total_beds = gen_beds + icu_beds
+            , .groups = 'keep') %>%
+  select(hrr,covid_general_patients,covid_ICU_patients,nonCOVID_gen_patients,nonCOVID_ICU_patients
+                   ,total_COVID_patients,total_nonCOVID_patients,total_gen_patients,total_ICU_patients,total_patients
+                   ,gen_beds,icu_beds,total_beds)
+```
+
+Plot timeseries of individual hospital
+```{r}
+pk <- '190099'
+facility %>%
+  filter( hospital_pk == pk) %>%
+  pivot_longer(c(total_beds, inpatient_beds, total_icu_beds)) %>%
+  ggplot(aes(x = collection_date, y = value, color = name)) +
+    geom_jitter(height = 0)
+```
+```{r}
+summary(facility %>%
+  select(hospital_pk, collection_date, total_beds, inpatient_beds, total_icu_beds)
+  )
 ```
 
 Aggregate by state
 ```{r}
-state <- facility %>%
+state_d <- facility %>%
+  group_by(state, collection_date) %>%
+  summarise(
+            total_all_beds = sum(total_beds, na.rm = TRUE)
+            , inpatient_all_beds = sum(inpatient_beds, na.rm = TRUE)
+            , icu_all_beds = sum(total_icu_beds, na.rm = TRUE)
+            , total_child_beds = total_all_beds - sum(all_adult_hospital_beds, na.rm = TRUE)
+            , inpatient_child_beds = inpatient_all_beds - sum(all_adult_hospital_inpatient_beds, na.rm = TRUE)
+            , icu_child_beds = icu_all_beds - sum(total_staffed_adult_icu_beds, na.rm = TRUE)
+            , inpatient_all_beds_used = sum(inpatient_beds_used, na.rm = TRUE)
+            , inpatient_child_beds_used = inpatient_all_beds_used - sum(all_adult_hospital_inpatient_bed_occupied, na.rm = TRUE)
+            , icu_all_beds_used = sum(icu_beds_used, na.rm = TRUE)
+            , icu_child_beds_used = icu_all_beds_used - sum(staffed_adult_icu_bed_occupancy, na.rm = TRUE)
+            , total_child_beds_used_covid_confirmed = sum(total_pediatric_patients_hospitalized_confirmed_covid, na.rm = TRUE)
+            , total_child_beds_used_covid = sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , total_all_beds_used_covid = total_child_beds_used_covid + sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , admission_child_covid_confirmed = sum(previous_day_admission_pediatric_covid_confirmed, na.rm = TRUE)
+            , admission_child_covid = admission_child_covid_confirmed +
+                                            sum(previous_day_admission_pediatric_covid_suspected, na.rm = TRUE)
+            , admission_all_covid = admission_child_covid 
+                                        + sum(previous_day_admission_adult_covid_suspected 
+                                              + previous_day_admission_adult_covid_confirmed
+                                              , na.rm = TRUE)
+            , .groups = 'keep')
+
+# moving average of the variables above
+state_ma <- state_d[order(state_d$state, state_d$collection_date),] %>%
   group_by(state) %>%
-  summarise()
+  mutate(
+            total_all_beds = rollmean(total_all_beds, k=7, fill=NA)
+            , inpatient_all_beds = rollmean(inpatient_all_beds, k=7, fill=NA)
+            , icu_all_beds = rollmean(icu_all_beds, k=7, fill=NA)
+            , total_child_beds = rollmean(total_child_beds, k=7, fill=NA)
+            , inpatient_child_beds = rollmean(inpatient_child_beds, k=7, fill=NA)
+            , icu_child_beds = rollmean(icu_child_beds, k=7, fill=NA)
+            , total_all_beds_used_covid = rollmean(total_all_beds_used_covid, k=7, fill=NA)
+            , total_child_beds_used_covid_confirmed = rollmean(total_child_beds_used_covid_confirmed, k=7, fill=NA)
+            , total_child_beds_used_covid = rollmean(total_child_beds_used_covid, k=7, fill=NA)
+            , admission_all_covid = rollmean(admission_all_covid, k=7, fill=NA)
+            , admission_child_covid_confirmed = rollmean(admission_child_covid_confirmed, k=7, fill=NA)
+            , admission_child_covid = rollmean(admission_child_covid, k=7, fill=NA)
+            ) 
+
+state <- state_ma %>%
+  pivot_longer(cols = -c(state, collection_date)
+               , names_pattern = "(...*)_(...*)_beds", names_to = c("bedtype", "scope")) %>%
+  mutate(bedtype=ifelse(bedtype=="", "value", bedtype)) 
+# %>%  pivot_wider(names_from = 'scope', values_from = 'value')
 ```
 
+Plot timeseries
+```{r, fig.width = 6}
+# Pediatric admissions
+state_ma %>%
+  filter( state %in% R4states & collection_date > '2020-06-01') %>%
+  pivot_longer(cols = starts_with('admission_child_covid')) %>%
+  ggplot(aes(x = collection_date, y = value, color = name, fill = name)) +
+    facet_wrap(~ state, ncol = 3, scales = 'free_y') +
+    geom_area() +
+    scale_fill_manual(name=NULL, breaks=c("admission_child_covid_confirmed","admission_child_covid") 
+                          , values = c('transparent','orange')
+                          , labels=c("Confirmed","Confirmed + Suspected")
+                        ) +
+    labs(x = NULL, y = 'daily pediatric admissions with COVID-19, 7-day moving average') +
+    expand_limits(y = 0)
+```
+```{r, fig.width = 6}
+# Pediatric & overall admissions
+state_ma %>%
+  filter( state %in% NEstates & collection_date > '2020-06-01') %>%
+  pivot_longer(cols = c(admission_all_covid, admission_child_covid)) %>%
+  ggplot(aes(x = collection_date, y = value, color = name)) +
+    facet_wrap(~ state, ncol = 3, scales = 'free_y') +
+    geom_line() +
+    scale_colour_manual(name=NULL, breaks=c("admission_child_covid","admission_all_covid") 
+                          , values=c('red', 'orange')
+                          , labels=c("Pediatric admissions","All admissions")
+                        ) +
+    labs(x = NULL, y = 'daily admissions with COVID-19 (Confirmed + Suspected), 7-day moving average') +
+    expand_limits(y = 0)
+```
+```{r, fig.width = 6}
+# Pediatric occupancy
+state_ma %>%
+  filter( state %in% R4states & collection_date > '2020-06-01') %>%
+  pivot_longer(cols = c(total_child_beds_used_covid_confirmed, total_child_beds_used_covid)) %>%
+  ggplot(aes(x = collection_date, y = value, color = name)) +
+    facet_wrap(~ state, ncol = 3, scales = 'free_y') +
+    geom_line() +
+    scale_colour_discrete(name=NULL, breaks=c('total_child_beds_used_covid_confirmed', 'total_child_beds_used_covid') 
+                          , labels=c("Confirmed","Confirmed + Suspected")
+                        ) +
+    labs(x = NULL, y = 'Hospital pediatric patients with COVID-19, 7-day moving average') +
+    expand_limits(y = 0)
+```
+
+```{r, fig.width = 6}
+# Pediatric & overall occupancy
+state_ma %>%
+  filter( state %in% R1states & collection_date > '2020-06-01') %>%
+  pivot_longer(cols = c(total_all_beds_used_covid, total_child_beds_used_covid)) %>%
+  ggplot(aes(x = collection_date, y = value, color = name)) +
+    facet_wrap(~ state, ncol = 3, scales = 'free_y') +
+    geom_line() +
+    scale_colour_manual(name=NULL, breaks=c("total_child_beds_used_covd","total_all_beds_used_covd") 
+                          , values=c('blue', 'green')
+                          , labels=c("Pediatric occupancy","Overall occupancy")
+                        ) +
+    labs(x = NULL, y = 'Hospital patients with COVID-19 (Confirmed + Suspected), 7-day moving average') +
+    expand_limits(y = 0)
+```
+Ratio of pediatric COVID hospitalizations to overall COVID hospitalizations
+```{r, fig.width = 8}
+state_ma %>%
+  filter( state %in% R1states & collection_date > '2020-10-01') %>%
+  mutate(r = total_child_beds_used_covid / total_all_beds_used_covid) %>%
+  ggplot(aes(x = collection_date, y = r, color = state)) +
+    facet_wrap(~ state, ncol = 3, scales = 'free_y') +
+    geom_line() +
+    labs(x = NULL, y = 'Pediatric/Total patients with COVID-19 (Confirmed + Suspected), 7-day moving average') +
+    expand_limits(y = 0)
+```
+
+```{r, fig.width = 6}
+# Pediatric beds
+state_ma %>%
+  filter( state %in% R1states & collection_date > '2020-06-01') %>%
+  pivot_longer(cols = c(inpatient_child_beds, icu_child_beds)) %>%
+  ggplot(aes(x = collection_date, y = value, color = name)) +
+    facet_wrap(~ state, ncol = 3, scales = 'free_y') +
+    geom_line() +
+    scale_colour_discrete(name=NULL, breaks=c('inpatient_child_beds', 'icu_child_beds') 
+                          , labels=c("Inpatient beds","ICU beds")
+                        ) +
+    labs(x = NULL, y = 'Total hospital pediatric beds, 7-day moving average') +
+    expand_limits(y = 0)
+```
+
+
+```{r}
+st <- 'MA'
+state %>%
+  filter( state == st #& collection_date > '2021-06-01'
+          ) %>%
+  ggplot(aes(x = collection_date, y = value, color = bedtype)) +
+    facet_wrap(~ scope, ncol = 1, scales = 'free_y') +
+    geom_line() +
+    expand_limits(y = 0)
+```
 

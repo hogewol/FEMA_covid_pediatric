@@ -1,0 +1,216 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(zoo)
+library(readxl)
+library(lubridate)
+
+theme_set(theme_bw() + theme( legend.position="bottom" ) +
+             theme( text = element_text(size=16, face="bold")) +
+            theme(axis.text.x=element_text(angle=60, hjust=1)))
+
+R1states <- c('CT', 'MA', 'ME', 'NH', 'RI', 'VT') # FEMA Region 1
+R2states <- c('NY', 'NJ', 'PR')
+R3states <- c('DE', 'DC', 'MD', 'PA', 'VA', 'WV')
+R4states <- c('AL', 'FL', 'GA', 'KY', 'MS', 'NC', 'SC', 'TN') # Region 4
+R5states <- c('IL', 'IN', 'MI', 'MN', 'OH', 'WI')
+R6states <- c('TX', 'AR', 'LA', 'NM', 'OK')
+R7states <- c('IA', 'KS', 'MO', 'NE', '')
+R8states <- c('CO', 'MT', 'ND', 'SD', 'UT', 'WY')
+R9states <- c('AZ', 'CA', 'HI', 'NV') # Some Islands Missing Abriviations
+R10states <- c('AK', 'ID', 'OR', 'WA')
+
+Selectstates <- c('FL', 'MS', 'TX', 'CA') # Non-New England States to Compare
+```
+
+load data from HHS Protect obtained by Jeff Cegan
+```{r}
+df_raw <- read.csv('data/[Unified] Hospital Analytic.csv') 
+```
+
+```{r}
+facility <- df_raw %>%
+  mutate(collection_date = as.Date(collection_date))
+```
+
+
+
+Aggregate by hrr
+```{r}
+hrr_d <- facility %>%
+  group_by(hrr, collection_date) %>%
+  summarise(
+            total_all_beds = sum(total_beds, na.rm = TRUE)
+            , inpatient_all_beds = sum(inpatient_beds, na.rm = TRUE)
+            , icu_all_beds = sum(total_icu_beds, na.rm = TRUE)
+            , total_child_beds = total_all_beds - sum(all_adult_hospital_beds, na.rm = TRUE)
+            , inpatient_child_beds = inpatient_all_beds - sum(all_adult_hospital_inpatient_beds, na.rm = TRUE)
+            , icu_child_beds = icu_all_beds - sum(total_staffed_adult_icu_beds, na.rm = TRUE)
+            , inpatient_all_beds_used = sum(inpatient_beds_used, na.rm = TRUE)
+            , inpatient_child_beds_used = inpatient_all_beds_used - sum(all_adult_hospital_inpatient_bed_occupied, na.rm = TRUE)
+            , icu_all_beds_used = sum(icu_beds_used, na.rm = TRUE)
+            , icu_child_beds_used = icu_all_beds_used - sum(staffed_adult_icu_bed_occupancy, na.rm = TRUE)
+            , total_child_beds_used_covid_confirmed = sum(total_pediatric_patients_hospitalized_confirmed_covid, na.rm = TRUE)
+            , total_child_beds_used_covid = sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , total_all_beds_used_covid = total_child_beds_used_covid + sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , admission_child_covid_confirmed = sum(previous_day_admission_pediatric_covid_confirmed, na.rm = TRUE)
+            , admission_child_covid = admission_child_covid_confirmed +
+                                            sum(previous_day_admission_pediatric_covid_suspected, na.rm = TRUE)
+            , admission_all_covid = admission_child_covid 
+                                        + sum(previous_day_admission_adult_covid_suspected 
+                                              + previous_day_admission_adult_covid_confirmed
+                                              , na.rm = TRUE)
+            , admission_confirmed_covid = admission_child_covid_confirmed 
+                                        + sum(previous_day_admission_adult_covid_confirmed, na.rm = TRUE)
+            , non_child_covid_utilization = ((icu_all_beds_used + inpatient_all_beds_used) - total_child_beds_used_covid)/total_all_beds
+            # , total_utilization = (inpatient_all_beds_used)/total_all_beds
+            , total_utilization = (inpatient_all_beds_used)/inpatient_all_beds
+            , icu_utilization = (icu_all_beds_used)/icu_all_beds
+            , general_utilization = ((inpatient_all_beds_used-icu_all_beds_used))/(inpatient_all_beds-icu_all_beds)
+            , covid_deaths = sum(deaths_covid, na.rm = TRUE)
+            , .groups = 'keep')
+
+# moving average of the variables above
+hrr_ma <- hrr_d[order(hrr_d$hrr, hrr_d$collection_date),] %>%
+  group_by(hrr) %>%
+  mutate(
+            total_all_beds = rollmean(total_all_beds, k=7, fill=NA)
+            , inpatient_all_beds = rollmean(inpatient_all_beds, k=7, fill=NA)
+            , icu_all_beds = rollmean(icu_all_beds, k=7, fill=NA)
+            , total_child_beds = rollmean(total_child_beds, k=7, fill=NA)
+            , inpatient_child_beds = rollmean(inpatient_child_beds, k=7, fill=NA)
+            , icu_child_beds = rollmean(icu_child_beds, k=7, fill=NA)
+            , total_all_beds_used_covid = rollmean(total_all_beds_used_covid, k=7, fill=NA)
+            , total_child_beds_used_covid_confirmed = rollmean(total_child_beds_used_covid_confirmed, k=7, fill=NA)
+            , total_child_beds_used_covid = rollmean(total_child_beds_used_covid, k=7, fill=NA)
+            , admission_all_covid = rollmean(admission_all_covid, k=7, fill=NA)
+            , admission_child_covid_confirmed = rollmean(admission_child_covid_confirmed, k=7, fill=NA)
+            , admission_child_covid = rollmean(admission_child_covid, k=7, fill=NA)
+            , non_child_covid_utilization = rollmean(non_child_covid_utilization, k=7, fill=NA)
+            , total_utilization = rollmean(total_utilization, k=7, fill=NA)
+            , icu_utilization = rollmean(icu_utilization, k=7, fill=NA)
+            , general_utilization = rollmean(general_utilization, k=7, fill=NA)
+            , covid_deaths = rollmean(covid_deaths, k=7, fill=NA)
+            ) 
+
+```
+
+```{r}
+hrr_d_NE <- hrr_d %>%
+  filter( hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424) & collection_date > '2020-09-01') 
+hrr_d_NE$hrr <- factor(hrr_d_NE$hrr, levels = c(109,110,111,221,222,227,230,231,281,282,364,424,295))
+hrr_d_NE <- hrr_d_NE%>%
+  mutate(hrr=recode(hrr, 
+                        '109' = 'CT - Bridgeport',
+                        '110'	= 'CT - Hartford',
+                        '111'	= 'CT - New Haven',
+                        '221'	= 'ME - Bangor',
+                        '222'	= 'ME - Portland',
+                        '227'	= 'MA - Boston',
+                        '230'	= 'MA - Springfield',
+                        '231'	= 'MA - Worcester',
+                        '281'	= 'NH - Lebanon',
+                        '282'	= 'NH - Manchester',
+                        '295'	= 'NY - Albany',
+                        '364'	= 'RI - Providence',
+                        '424'	= 'VT - Burlington'))
+```
+
+
+Graph Hospitalization - No Averaging
+```{r, fig.height = 4, fig.width = 4}
+hrr_d_NE %>%
+  # mutate(r = total_utilization*100) %>%
+  ggplot(aes(x = collection_date, y = total_utilization)) + #, color = state
+    facet_wrap(~ hrr, ncol = 3) + #scales = 'free_y' - For different axes
+    geom_hline(yintercept = 0.8, color = 'orange', linetype='dashed') +
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Total Hospital Utilization', title = 'COVID-19 Hospital Utilization') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels=scales::percent #, limits = c(0, 1)
+                       ) +
+    theme( text = element_text(size=12))
+```
+
+
+
+Graph Hospitalization - Averaging
+
+```{r}
+hrr_ma_NE <- hrr_ma %>%
+  filter( hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424) & collection_date > '2020-09-01')
+hrr_ma_NE$hrr <- factor(hrr_ma_NE$hrr, levels = c(109,110,111,221,222,227,230,231,281,282,364,424,295))
+hrr_ma_NE <- hrr_ma_NE %>%
+  mutate(hrr=recode(hrr, 
+                        '109' = 'CT - Bridgeport',
+                        '110'	= 'CT - Hartford',
+                        '111'	= 'CT - New Haven',
+                        '221'	= 'ME - Bangor',
+                        '222'	= 'ME - Portland',
+                        '227'	= 'MA - Boston',
+                        '230'	= 'MA - Springfield',
+                        '231'	= 'MA - Worcester',
+                        '281'	= 'NH - Lebanon',
+                        '282'	= 'NH - Manchester',
+                        '295'	= 'NY - Albany',
+                        '364'	= 'RI - Providence',
+                        '424'	= 'VT - Burlington'))
+```
+
+```{r, fig.height = 4, fig.width = 4}
+hrr_ma_NE %>% # filter(collection_date > "2021-12-01") %>%
+  ggplot(aes(x = collection_date, y = total_utilization)) + #, color = state
+    facet_wrap(~ hrr, ncol = 3) + #scales = 'free_y' - For different axes
+    geom_hline(yintercept = 0.8, color = 'orange', linetype='dashed') +
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Hospital Utilization', title = 'COVID-19 Total Hospital Utilization, 7-Day Moving Average') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels=scales::percent, limits = c(0, 1)
+                       ) +
+    theme( text = element_text(size=12))
+```
+```{r, fig.height = 4, fig.width = 4}
+hrr_ma_NE %>%
+  ggplot(aes(x = collection_date, y = icu_utilization)) + #, color = state
+    facet_wrap(~ hrr, ncol = 3) + #scales = 'free_y' - For different axes
+    geom_hline(yintercept = 0.8, color = 'orange', linetype='dashed') +
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 ICU Utilization', title = 'COVID-19 ICU Utilization, 7-Day Moving Average') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels=scales::percent, limits = c(0, 1)) +
+    theme( text = element_text(size=12))
+```
+
+```{r, fig.height = 4, fig.width = 4}
+hrr_ma_NE %>%
+  ggplot(aes(x = collection_date, y = general_utilization)) + #, color = state
+    facet_wrap(~ hrr, ncol = 3) + #scales = 'free_y' - For different axes
+    geom_hline(yintercept = 0.8, color = 'orange', linetype='dashed') +
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 General Bed Utilization', title = 'COVID-19 General Bed Utilization, 7-Day Moving Average') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels=scales::percent, limits = c(0, 1)
+                       ) +
+    theme( text = element_text(size=12))
+```
+```{r, fig.height=8}
+hrr_ma %>%
+  filter( hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424) & collection_date > '2020-09-01') %>%
+  mutate(r = total_utilization*100) %>%
+  ggplot(aes(x = collection_date, y = r)) + #, color = state
+    facet_wrap(~ hrr, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'COVID-19 Hospital Utilization', title = 'COVID-19 Hospital Utilization, \n 7-Day Moving Average') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+```
+
+
+
+
+
