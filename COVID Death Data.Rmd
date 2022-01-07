@@ -88,7 +88,6 @@ daily_deaths_by_state_ma <- daily_deaths_by_state_ma[ , -1]
 ```
 
 
-
 ```{r}
 daily_deaths_by_state_rates <- daily_deaths_by_state_rates %>%
   group_by(Province_State) %>%
@@ -117,8 +116,7 @@ daily_deaths_rates_full <- daily_deaths_by_state_rates_with_pop %>%
 
 
 
-
-
+Weekly Deaths per 100K 
 ```{r, fig.height=4}
 daily_deaths_rates_full %>%
   filter(state %in% R1states & date > '2020-09-01') %>%
@@ -130,9 +128,116 @@ daily_deaths_rates_full %>%
     scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
 ```
 
+Review Rates
+```{r}
+daily_deaths_rates_full %>%
+  filter(state %in% R1states & date > '2021-12-22') %>%
+  mutate(r = (weekly_deaths/population)*100000)
+```
 
 
-NEED to do connect to cases to calculate death rate
+
+Import Case Data
+```{r}
+# truth URL from the CDC ensemble 
+turl <- 'https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
+df <- read.csv( turl ) %>% tidyr::pivot_longer( cols = starts_with("X")
+                                  , names_to="date", names_prefix="X"
+                                  , values_to = "value",  values_drop_na = TRUE ) %>%
+              mutate( date=as.Date(gsub("\\.","\\/",date), format="%m/%d/%y")
+                      , location=sprintf("%05d", FIPS) ) %>%
+              filter( substr(location, start=1, stop=2) %in% NEstfips )
+```
+
+
+```{r}
+cases_by_state <- df %>%
+  group_by(Province_State, date) %>%
+  summarise(
+    cases = sum(value, na.rm = TRUE)
+    , .groups = 'keep'
+  )
+
+daily_cases_by_state <- cases_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_cases = cases - lag(cases, default = first(cases), order_by = date)
+    )
+
+daily_cases_by_state_rates <- cases_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_cases = cases - lag(cases, default = first(cases), order_by = date)
+    )
+
+daily_cases_by_state <- daily_cases_by_state %>%
+  group_by(Province_State) %>%
+  mutate(
+    daily_cases = rollmean(daily_cases, k=7, fill = NA)
+    )
+
+daily_cases_by_state$state <- state.abb[match(daily_cases_by_state$Province_State, state.name)]
+daily_cases_by_state <- rename(daily_cases_by_state, collection_date = date)
+daily_cases_by_state <- daily_cases_by_state[ , -1]
+```
+
+State Level Weekly Average Data for the Case Rate
+```{r}
+daily_cases_by_state_rates <- daily_cases_by_state_rates %>%
+  group_by(Province_State) %>%
+  mutate(
+    week_year = paste(week(date), year(date), sep=" ")   
+    )
+
+daily_cases_by_state_rates$state <- state.abb[match(daily_cases_by_state_rates$Province_State, state.name)]
+daily_cases_by_state_rates <- rename(daily_cases_by_state_rates, collection_date = date)
+daily_cases_by_state_rates <- daily_cases_by_state_rates[ , -1]
+
+daily_cases_by_state_rates <- daily_cases_by_state_rates %>%
+  group_by(state, week_year) %>%
+  summarise(
+    weekly_cases = mean(daily_cases, na.rm = TRUE)
+    , date = first(collection_date)
+    , lag_cases_death_3 = lag(weekly_cases, default = first(weekly_cases), k=3)
+    , lag_cases_death_4 = lag(weekly_cases, default = first(weekly_cases), k=4)
+    , .groups = 'keep'
+            ) 
+```
+
+
+Merge Case Rate and Death Rate Datasets
+```{r}
+case_death_rate_df <- daily_deaths_rates_full %>%
+  full_join(daily_cases_by_state_rates, by = c("state","date"))
+```
+
+
+
+Death Rate - 3 week lag
+```{r, fig.height=4}
+case_death_rate_df %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = (weekly_deaths/lag_cases_death_3)*100) %>%
+  ggplot(aes(x = date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'Percent', title = 'Weekly COVID-19 Death Rate,\n 7-day moving average with a 4 week case lag') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+```
+
+
+Death Rate - 4 week lag
+```{r, fig.height=4}
+case_death_rate_df %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = (weekly_deaths/lag_cases_death_4)*100) %>%
+  ggplot(aes(x = date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'Percent', title = 'Weekly COVID-19 Death Rate,\n 7-day moving average with a 4 week case lag') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+```
+
 
 
 

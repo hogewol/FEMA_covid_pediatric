@@ -1,0 +1,110 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(zoo)
+library(readxl)
+library(openxlsx)
+
+theme_set( theme_bw() + theme( legend.position="bottom" ) +
+             theme( text = element_text(size=16, face="bold")) )
+
+R1states <- c('CT', 'MA', 'ME', 'NH', 'RI', 'VT') # FEMA Region 1
+R2states <- c('NY', 'NJ', 'PR')
+R3states <- c('DE', 'DC', 'MD', 'PA', 'VA', 'WV')
+R4states <- c('AL', 'FL', 'GA', 'KY', 'MS', 'NC', 'SC', 'TN') # Region 4
+R5states <- c('IL', 'IN', 'MI', 'MN', 'OH', 'WI')
+R6states <- c('TX', 'AR', 'LA', 'NM', 'OK')
+R7states <- c('IA', 'KS', 'MO', 'NE', '')
+R8states <- c('CO', 'MT', 'ND', 'SD', 'UT', 'WY')
+R9states <- c('AZ', 'CA', 'HI', 'NV') # Some Islands Missing Abriviations
+R10states <- c('AK', 'ID', 'OR', 'WA')
+
+Selectstates <- c('FL', 'MS', 'TX', 'CA') # Non-New England States to Compare
+```
+
+
+
+load data from HHS Protect obtained by Jeff Cegan
+```{r}
+df_raw <- read.csv('data/[Unified] Hospital Analytic.csv') 
+```
+
+```{r}
+facility <- df_raw %>%
+  mutate(collection_date = as.Date(collection_date))
+```
+
+
+Select Date with most reports
+```{r}
+facility %>% filter(collection_date > "2021-12-20" 
+                    & hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424)) %>%
+  group_by(hrr, collection_date) %>%
+  summarise(nrows = n()) %>%
+  spread(collection_date, nrows)
+```
+
+
+Aggregate by HHR
+```{r}
+hrr_d <- facility %>%
+  filter(collection_date == "2022-01-05" & hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424)) %>%
+  group_by(hrr) %>% # Can add collection date here if want each HRR over time (and comment line above)
+  summarise(
+            total_COVID_patients = sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE) + sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , total_nonCOVID_patients = sum(inpatient_beds_used, na.rm = TRUE) - sum(total_adult_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE) - sum(total_pediatric_patients_hospitalized_confirmed_and_suspected_covid, na.rm = TRUE)
+            , covid_general_patients = sum(inpatient_beds_used_covid, na.rm = TRUE) - sum(staffed_icu_adult_patients_confirmed_and_suspected_covid, na.rm = TRUE)
+            , covid_ICU_patients = sum(staffed_icu_adult_patients_confirmed_and_suspected_covid, na.rm = TRUE)
+            , nonCOVID_ICU_patients = sum(icu_beds_used, na.rm = TRUE) - covid_ICU_patients
+            , nonCOVID_gen_patients = total_nonCOVID_patients - nonCOVID_ICU_patients
+            , total_gen_patients = sum(inpatient_beds_used, na.rm = TRUE) - sum(icu_beds_used, na.rm = TRUE)
+            , total_ICU_patients = covid_ICU_patients + nonCOVID_ICU_patients
+            , total_patients = total_gen_patients + total_ICU_patients
+            , gen_beds = sum(inpatient_beds, na.rm = TRUE)
+            , icu_beds = sum(total_icu_beds, na.rm = TRUE)
+            , total_beds = gen_beds + icu_beds
+            , Hospitals_reporting_on_day_data_was_pulled = n()
+            , .groups = 'keep')
+
+```
+
+
+
+```{r}
+fname <- paste0('2022-01-05_HRR_Utilization.xlsx')
+openxlsx::write.xlsx( 
+              hrr_d %>% select(hrr, Hospitals_reporting_on_day_data_was_pulled, covid_general_patients,covid_ICU_patients,nonCOVID_gen_patients,nonCOVID_ICU_patients
+                   ,total_COVID_patients,total_nonCOVID_patients,total_gen_patients,total_ICU_patients,total_patients
+                   ,gen_beds,icu_beds,total_beds)
+              , fname )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

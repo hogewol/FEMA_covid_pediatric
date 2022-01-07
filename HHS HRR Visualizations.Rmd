@@ -23,7 +23,7 @@ R5states <- c('IL', 'IN', 'MI', 'MN', 'OH', 'WI')
 R6states <- c('TX', 'AR', 'LA', 'NM', 'OK')
 R7states <- c('IA', 'KS', 'MO', 'NE', '')
 R8states <- c('CO', 'MT', 'ND', 'SD', 'UT', 'WY')
-R9states <- c('AZ', 'CA', 'HI', 'NV') # Some Islands Missing Abriviations
+R9states <- c('AZ', 'CA', 'HI', 'NV') # Some Islands Missing Abbreviations
 R10states <- c('AK', 'ID', 'OR', 'WA')
 
 Selectstates <- c('FL', 'MS', 'TX', 'CA') # Non-New England States to Compare
@@ -133,15 +133,13 @@ hrr_d_NE %>%
     geom_line(color = "blue", size = 1) +
     labs(x = NULL, y = 'COVID-19 Total Hospital Utilization', title = 'COVID-19 Hospital Utilization') +
     scale_x_date(date_breaks = "2 month", date_labels =  "%b %d %Y") +
-    scale_y_continuous(labels=scales::percent #, limits = c(0, 1)
-                       ) +
+    scale_y_continuous(labels=scales::percent, limits = c(0, 1)) +
     theme( text = element_text(size=12))
 ```
 
 
 
 Graph Hospitalization - Averaging
-
 ```{r}
 hrr_ma_NE <- hrr_ma %>%
   filter( hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424) & collection_date > '2020-09-01')
@@ -164,17 +162,17 @@ hrr_ma_NE <- hrr_ma_NE %>%
 ```
 
 ```{r, fig.height = 4, fig.width = 4}
-hrr_ma_NE %>% # filter(collection_date > "2021-12-01") %>%
+hrr_ma_NE %>%
   ggplot(aes(x = collection_date, y = total_utilization)) + #, color = state
     facet_wrap(~ hrr, ncol = 3) + #scales = 'free_y' - For different axes
     geom_hline(yintercept = 0.8, color = 'orange', linetype='dashed') +
     geom_line(color = "blue", size = 1) +
     labs(x = NULL, y = 'COVID-19 Hospital Utilization', title = 'COVID-19 Total Hospital Utilization, 7-Day Moving Average') +
     scale_x_date(date_breaks = "2 month", date_labels =  "%b %d %Y") +
-    scale_y_continuous(labels=scales::percent, limits = c(0, 1)
-                       ) +
+    scale_y_continuous(labels=scales::percent, limits = c(0, 1)) +
     theme( text = element_text(size=12))
 ```
+
 ```{r, fig.height = 4, fig.width = 4}
 hrr_ma_NE %>%
   ggplot(aes(x = collection_date, y = icu_utilization)) + #, color = state
@@ -199,16 +197,8 @@ hrr_ma_NE %>%
                        ) +
     theme( text = element_text(size=12))
 ```
-```{r, fig.height=8}
-hrr_ma %>%
-  filter( hrr %in% c(109,110,111,221,222,227,230,231,281,282,295,364,424) & collection_date > '2020-09-01') %>%
-  mutate(r = total_utilization*100) %>%
-  ggplot(aes(x = collection_date, y = r)) + #, color = state
-    facet_wrap(~ hrr, ncol = 2) + #scales = 'free_y' - For different axes
-    geom_line(color = "blue", size = 1) +
-    labs(x = NULL, y = 'COVID-19 Hospital Utilization', title = 'COVID-19 Hospital Utilization, \n 7-Day Moving Average') +
-    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
-```
+
+
 
 
 
