@@ -31,6 +31,7 @@ Selectstates <- c('FL', 'MS', 'TX', 'CA') # Non-New England States to Compare
 ```
 
 load data from Census Data: https://datacenter.kidscount.org/data/tables/101-child-population-by-age-group#detailed/2/2-53/false/1729,37/62,63,64,6,4693/419
+https://datacenter.kidscount.org/rawdata.axd?ind=101&loc=1
 ```{r}
 df_child_counts <- read_excel('data/Child population by age group.xlsx') 
 ```
@@ -109,7 +110,8 @@ state_d <- facility %>%
                                               + previous_day_admission_adult_covid_confirmed
                                               , na.rm = TRUE)
             , non_child_covid_utilization = ((inpatient_all_beds_used) - total_child_beds_used_covid)/total_all_beds
-            , total_utilization = (inpatient_all_beds_used)/total_all_beds
+            # , total_utilization = (inpatient_all_beds_used)/total_all_beds
+            , total_utilization = (inpatient_all_beds_used)/inpatient_all_beds
             , .groups = 'keep')
 
 # moving average of the variables above
@@ -264,25 +266,25 @@ ne_chs <- c("CONNECTICUT CHILDRENS MEDICAL CENTER", "BOSTON CHILDREN'S HOSPITAL"
 
 state_ma_ch %>% 
   filter( hospital_name %in% ne_chs & collection_date > '2020-09-01') %>%
-  mutate(r1 = total_utilization*100) %>%
-  mutate(r2 = non_child_covid_utilization*100) %>%
+  mutate(r1 = total_utilization) %>%
+  mutate(r2 = non_child_covid_utilization) %>%
   ggplot() +  
   facet_wrap(~ hospital_name, ncol = 2) +
   geom_ribbon(aes(ymin = r2, ymax = r1, x=collection_date), fill = "blue") + 
   geom_line(aes(x = collection_date, y = r1, color = "Total Utilization")) +
   geom_line(aes(x = collection_date, y = r2, color = "Non-COVID-19 Utilization")) +
-  labs(title = "Children's Hospital Utilization, 7-day moving average", color = "") +
-  ylim(0, 100) +
-  scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y") +
-  ylab('Percent (%)')
+  labs(title = "Children's Hospital Utilization, 7-day moving average", color = "", x = NULL, y = NULL) +
+  scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y") +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1))
 ```
 
 ```{r}
 state_ma_ch %>% 
-  filter( hospital_name %in% ne_chs & collection_date > '2021-12-21') %>%
+  filter( hospital_name %in% ne_chs & collection_date %in% c(as.Date('2022-01-05'), as.Date('2022-01-12'))) %>%
   mutate(r1 = total_utilization*100) %>%
   mutate(r2 = non_child_covid_utilization*100) %>%
   mutate(diff = r1-r2) %>%
+  filter(!is.na(diff)) %>%
   select(
     hospital_name
     , collection_date
@@ -309,20 +311,34 @@ state_ma %>%
   mutate(r = admission_child_covid/as.numeric(Data)*100000) %>%
   ggplot(aes(x = collection_date, y = r)) + #, color = state
     facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
-    geom_line(color = "blue", size = 1) +
-    labs(x = NULL, y = 'COVID-19 Pediatric Hospitalizations', title = 'COVID-19 Daily Hospital Admissions per 100,000 Children,\n 7-day moving average') +
-    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    # geom_line(color = "blue", size = 1) +
+    geom_point(color = "gray55", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.05, se = FALSE) +
+    labs(x = NULL, y = 'COVID-19 Pediatric Hospitalizations', title = 'COVID-19 Daily Hospital Admissions per 100K Children,\n 7-day moving average') +
+    # scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y")
+```
+## Slide - R1 and national 7-day averages
+```{r, fig.height=4}
+col_date <- '2022-01-12'
+state_ma %>%
+  filter( collection_date > col_date) %>%
+  ungroup() %>% group_by(collection_date) %>%
+  summarise(US_7DAYAVG = mean(admission_child_covid/as.numeric(Data)*1e5, na.rm = TRUE))
+```
+```{r, fig.height=4}
+state_ma %>%
+  filter( state %in% R1states & collection_date > col_date) %>%
+  ungroup() %>% group_by(collection_date) %>%
+  summarise(R1_7DAYAVERAGE = mean(admission_child_covid/as.numeric(Data)*1e5, na.rm = TRUE))
 ```
 
 ```{r, fig.height=4}
 state_ma %>%
-  filter( state %in% R1states & collection_date > '2021-12-21') %>%
-  mutate(r = admission_child_covid/as.numeric(Data)*100000) %>%
-  select(
-    state
-    , collection_date
-    , r
-  )
+  filter( state %in% R1states & collection_date == col_date) %>%
+  ungroup() %>% 
+  mutate(r = admission_child_covid/as.numeric(Data)*1e5) %>%
+  select(collection_date, state, r)
 ```
 
 

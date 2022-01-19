@@ -64,9 +64,9 @@ df_population_r <- df_population %>%
 NEstfips <- c('09','25','23','33','44','50', '36') # FIPS of states in New England + NY
 #hrrnums <- c(109,110,111,221,222,227,230,231,281,282,295,364,424)
 
-# truth URL from the CDC ensemble 
+# truth URL from the CDC ensemble IS THIS RAW OR MOVING AVG?
 turl <- 'https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv'
-df <- read.csv( turl ) %>% tidyr::pivot_longer( cols = starts_with("X")
+df_jhu <- read.csv( turl ) %>% tidyr::pivot_longer( cols = starts_with("X")
                                   , names_to="date", names_prefix="X"
                                   , values_to = "value",  values_drop_na = TRUE ) %>%
               mutate( date=as.Date(gsub("\\.","\\/",date), format="%m/%d/%y")
@@ -76,7 +76,7 @@ df <- read.csv( turl ) %>% tidyr::pivot_longer( cols = starts_with("X")
 
 
 ```{r}
-cases_by_state <- df %>%
+cases_by_state <- df_jhu %>%
   group_by(Province_State, date) %>%
   summarise(
     cases = sum(value, na.rm = TRUE)
@@ -165,7 +165,7 @@ state_d <- facility %>%
                                               , na.rm = TRUE)
             , admission_confirmed_covid = admission_child_covid_confirmed 
                                         + sum(previous_day_admission_adult_covid_confirmed, na.rm = TRUE)
-            , total_utilization = (inpatient_all_beds_used)/inpatient_all_beds
+            , total_utilization = inpatient_all_beds_used/inpatient_all_beds
             , covid_deaths = sum(deaths_covid, na.rm = TRUE)
             , staffing_shortage_yes = sum(critical_staffing_shortage_today == 'true', na.rm = TRUE)
             , total_hosp_reporting = n()
@@ -368,61 +368,31 @@ crit_shortage_hosp_day_or_week <- temp %>%
 
 ```
 
-
-Staffing Shortage Graph
+# SLide Graph - Number of hospitals per state reporting lately
 ```{r, fig.height=4}
 state_d %>%
-  filter( state %in% R1states  & collection_date > '2021-12-22') %>% #& collection_date > '2020-09-01'
-  mutate(r = (staffing_shortage_yes/total_hosp_reporting)*100) %>%
+  filter( state %in% R1states & collection_date > '2022-01-10') %>% 
+  mutate(r = staffing_shortage_yes/total_hosp_reporting) %>%
+  select(state, collection_date, r, total_hosp_reporting)
+```
+Staffing Shortage Graph
+```{r, fig.height=4}
+# IMPORTANT
+date_most_hospitals_reported <- '2022-01-12'
+
+state_d %>%
+  # filter( state %in% R1states & total_hosp_reporting > 5 & collection_date > '2020-09-01') %>% 
+  filter( state %in% R1states & collection_date > '2020-09-01' & collection_date <= date_most_hospitals_reported) %>% 
+  mutate(r = staffing_shortage_yes/total_hosp_reporting) %>%
   ggplot(aes(x = collection_date, y = r)) + #, color = state
     facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
-    geom_smooth(color = "blue", size = 1, span = 0.3) +
-    #geom_line(color = "blue", size = 1) +
+    geom_point(color = "grey55", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.2) +
     labs(x = NULL, y = 'Percent of Hospitals Reporting Shortages', title = 'Hospital Staffing Shortages') +
-    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    # scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y") +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels = scales::percent)
 ```
-
-Staffing shortages at the hospital level for RI
-```{r}
-temp <- facility %>%
-  filter(state %in% c("RI") & collection_date == '2022-01-05')
-
-table(temp$critical_staffing_shortage_today)
-table(temp$critical_staffing_shortage_anticipated_within_week)
-
-crit_shortage_hosp <- temp %>%
-  filter(critical_staffing_shortage_today == 'true')
-
-crit_shortage_hosp_week <- temp %>%
-  filter(critical_staffing_shortage_anticipated_within_week == 'true')
-
-crit_shortage_hosp_day_or_week <- temp %>%
-  filter(critical_staffing_shortage_anticipated_within_week == 'true' | critical_staffing_shortage_today == 'true')
-
-```
-
-```{r}
-fname1 <- paste0('2022-01-05_RI_staff_shortage.xlsx')
-
-openxlsx::write.xlsx( 
-              temp %>% select(hospital_name, state, county, zip, hospital_subtype, critical_staffing_shortage_today, critical_staffing_shortage_anticipated_within_week)
-              , fname1 )
-```
-
-
-```{r}
-temp %>% 
-  select(hospital_name
-         , state
-         , county
-         , zip
-         , hospital_subtype
-         , system
-         , critical_staffing_shortage_today
-         , critical_staffing_shortage_anticipated_within_week)
-```
-
-
 
 
 Join HHS and Census Data
@@ -431,18 +401,27 @@ state_ma <- state_ma %>%
   full_join(df_population, by = "state")
 ```
 
-* POWER POINT Graph *
+# * POWER POINT Graph *
 Hospital Admissions per 100,000 Ppl
 ```{r, fig.height=4}
 state_ma %>%
-  filter( state %in% R1states & collection_date > '2021-12-22') %>%
+  filter( state %in% R1states & collection_date > '2020-09-01' & collection_date <= date_most_hospitals_reported) %>%
   mutate(r = (admission_all_covid/Population)*100000) %>%
   ggplot(aes(x = collection_date, y = r)) + #, color = state
     facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
     geom_line(color = "blue", size = 1) +
-    labs(x = NULL, y = 'COVID-19 Hospitalizations', title = 'COVID-19 Daily Hospital Admissions per 100,000 People,\n 7-day moving average') +
-    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    labs(x = NULL, y = 'COVID-19 Hospitalizations', title = 'COVID-19 Daily Hospital Admissions per 100K People,\n 7-day moving average') +
+    # scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels = "%b %d %Y")
 ```
+## Slide - R1 Average of Hosp admissions
+```{r}
+state_ma %>%
+  filter( state %in% R1states & collection_date > '2022-01-10') %>%
+  ungroup() %>% group_by(collection_date) %>%
+  summarise(r = sum(admission_all_covid) / sum(Population) * 1e5)
+```
+
 
 Join HHS and Case Data
 ```{r}
@@ -452,17 +431,99 @@ daily_cases_hosp <- state_ma %>%
 
 
 
-
+# Slide
 Case Incidence (all, not just hospitalizations) Per 100,000 People
 ```{r, fig.height=4}
 daily_cases_hosp %>%
-  filter(state %in% R1states & collection_date > '2021-12-22') %>% #& collection_date < '2020-12-28'
+  filter(state %in% R1states & collection_date > '2020-09-15') %>% 
   mutate(r = (daily_cases/Population)*100000) %>%
   ggplot(aes(x = collection_date, y = r)) + #, color = state
     facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
-    geom_line(color = "blue", size = 1) +
-    labs(x = NULL, y = 'COVID-19 Cases', title = 'COVID-19 Daily Cases per 100,000 People,\n 7-day moving average') +
-    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    # geom_line(color = "blue", size = 1) +
+    geom_point(color = "gray45", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.02) +
+    labs(x = NULL, y = 'COVID-19 Cases', title = 'COVID-19 Daily Cases per 100K People, Weekly Average') +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y")
+```
+
+# SLIDE: Resource Prioritization per State - REVIEW SHORTAGE DATE BELOW
+```{r}
+state_summary <- daily_cases_hosp %>%
+  filter(state %in% R1states) %>%
+  filter(!is.na(total_utilization)) %>%
+  group_by(state) %>%
+  mutate(maxdate = max(collection_date, na.rm = TRUE)) 
+#if (length(unique(state_summary$maxdate)) > 1){
+  state_summary$maxdate = date_most_hospitals_reported # min(unique(state_summary$maxdate))
+#}
+cols <- c('state', paste('Hospital Utilization as of', unique(state_summary$maxdate)))
+state_summary <- state_summary %>%
+  filter(collection_date == maxdate) %>%
+  select(state, total_utilization)
+colnames(state_summary) <- cols
+  
+tmp <- daily_cases_hosp %>%
+  filter(state %in% R1states) %>%
+  mutate(inc100k = (daily_cases/Population)*100000) %>%
+  filter(!is.na(inc100k)) %>%
+  group_by(state) %>%
+  mutate(maxdate = max(collection_date, na.rm = TRUE)) 
+if (length(unique(tmp$maxdate)) > 1){
+  tmp$maxdate = min(unique(tmp$maxdate))
+}
+cols <- c('state', paste('New Cases per 100K as of', unique(tmp$maxdate)))
+tmp <- tmp %>%
+  filter(collection_date == maxdate) %>%
+  select(state, inc100k)
+colnames(tmp) <- cols
+
+state_summary <- state_summary %>%
+  left_join(tmp, by = c('state'))
+  
+tmp <- state_ma %>%
+  filter(state %in% R1states) %>%
+  mutate(r = (admission_all_covid/Population)*100000) %>%
+  filter(!is.na(r)) %>%
+  group_by(state) %>%
+  mutate(maxdate = max(collection_date, na.rm = TRUE)) 
+if (length(unique(tmp$maxdate)) > 1){
+  tmp$maxdate = min(unique(tmp$maxdate))
+}
+cols <- c('state', paste('Hosp. Admissions per 100K as of', unique(tmp$maxdate)))
+tmp <- tmp %>%
+  filter(collection_date == maxdate) %>%
+  select(state, r)
+colnames(tmp) <- cols
+
+state_summary <- state_summary %>%
+  left_join(tmp, by = c('state'))
+
+tmp <- state_d %>%
+  filter( state %in% R1states) %>%
+  mutate(r = staffing_shortage_yes/total_hosp_reporting) %>%
+  filter(total_hosp_reporting > 5 & !is.na(r)) %>%
+  group_by(state) %>%
+  filter((state != 'MA' & collection_date == date_most_hospitals_reported)
+         | (state == 'MA'& collection_date == '2022-01-09')) %>%
+  select(state, r, collection_date)
+colnames(tmp) <- c('state', 'Staffing Shortage', 'Shortage as of')
+
+state_summary <- state_summary %>%
+  left_join(tmp, by = c('state')) %>%
+  arrange(match(state, c("RI", "MA", "CT", "NH", "VT", "ME")))
+```
+
+
+```{r}
+state_summary %>%
+  kableExtra::kbl() %>% kableExtra::kable_styling()
+```
+
+```{r}
+daily_cases_hosp %>%
+  mutate(inc100k = (daily_cases/Population)*100000) %>%
+  filter(!is.na(inc100k) & state == 'RI' & collection_date > '2021-12-21') %>%
+  select(state, collection_date, inc100k)
 ```
 
 
@@ -470,34 +531,38 @@ COVID admissions are confirmed ONLY
 Hospitalization Rate
 ```{r, fig.height=4}
 daily_cases_hosp_rates_full %>%
-  filter(state %in% R1states & date > '2021-12-22') %>%
-  mutate(r = (weekly_confirmed_covid_admissions/lag_cases)*100) %>%
-  filter(r < 200) %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = weekly_confirmed_covid_admissions/lag_cases) %>%
+  filter(r < 2) %>%
   ggplot(aes(x = date, y = r)) + #, color = state
     facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
-    geom_line(color = "blue", size = 1) +
-    labs(x = NULL, y = 'Percent', title = 'Confirmed COVID-19 Hospitalization Rate,\n 14-day moving average with a 2 week case lag') +
-    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    # geom_line(color = "blue", size = 1) +
+    geom_point(color = "gray45", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.1, se = FALSE) +
+    labs(x = NULL, y = NULL, title = 'Confirmed COVID-19 Hospitalization Rate,\n 14-day moving average with a 2 week case lag') +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels = scales::percent)
 ```
 
-COVID admissions are confirmed and suspected
-Hospitalization Rate
 ```{r, fig.height=4}
 daily_cases_hosp_rates_full %>%
-  filter(state %in% R1states & date > '2020-09-01') %>%
-  mutate(r = (weekly_all_covid_admissions/lag_cases)*100) %>%
-  filter(r < 200) %>%
+  filter(state %in% R1states & date > '2021-05-01') %>%
+  mutate(r = weekly_confirmed_covid_admissions/lag_cases) %>%
+  filter(r < 2) %>%
   ggplot(aes(x = date, y = r)) + #, color = state
     facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
-    geom_line(color = "blue", size = 1) +
-    labs(x = NULL, y = 'Percent', title = 'Confirmed and Suspected COVID-19 Hospitalization Rate,\n Weely Average with a 2 week case lag') +
-    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y")
+    # geom_line(color = "blue", size = 1) +
+    geom_point(color = "gray45", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.1, se = FALSE) +
+    labs(x = NULL, y = NULL, title = 'Confirmed COVID-19 Hospitalization Rate,\n 14-day moving average with a 2 week case lag') +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels = scales::percent) +
+    coord_cartesian(ylim = c(0, 0.15))
 ```
-
 
 ```{r}
 daily_cases_hosp_rates_full %>%
-  filter(state %in% R1states & date > '2021-12-01' ) %>% #& date < '2021-10-01'
+  filter(state %in% R1states & date > '2022-01-01' ) %>% #& date < '2021-10-01'
   mutate(r = (weekly_confirmed_covid_admissions/lag_cases)*100) %>%
   filter(r < 200) %>%
   group_by(state) %>%
@@ -518,8 +583,10 @@ region_ma <- region_ma %>%
 Admissions Incidence per 100,000 People, Regionally
 ```{r, fig.height=4}
 region_ma %>%
-  filter(fema_region %in% c("Region 1") & collection_date > '2020-12-27' & collection_date < '2020-12-31') %>% #& collection_date < '2020-12-25'
-  mutate(r = (admission_all_covid/Population)*100000)
+  filter(fema_region %in% c("Region 1") & collection_date > '2022-01-11') %>% #& collection_date < '2020-12-25'
+  mutate(r = (admission_all_covid/Population)* 1e5) %>%
+  select(fema_region, collection_date, admission_all_covid, inpatient_all_beds, r)
+
 ```
 
 
@@ -557,8 +624,9 @@ us_ma <- us_d[order(us_d$collection_date),] %>%
 Admissions per 100,000
 ```{r}
 us_ma %>%
-  filter(collection_date > '2021-12-22') %>%
-  mutate(r = (admission_all_covid / 329500000)*100000)
+  filter(collection_date > '2022-01-11') %>%
+  mutate(r = (admission_all_covid / 329500000)* 1e5) %>%
+  select(collection_date, admission_all_covid, r)
 ```
 
 
@@ -566,7 +634,7 @@ us_ma %>%
 Hospital Utilization By State
 ```{r, fig.height = 4, fig.width = 4}
 state_ma %>%
-  filter(state %in% R1states & collection_date > '2021-12-22') %>%
+  filter(state %in% R1states & collection_date > '2022-01-11') %>%
   select(
     state
     , collection_date
@@ -782,3 +850,57 @@ daily_cases_hosp_rates_full %>%
 ```
 
 
+Staffing shortages at the hospital level for RI
+```{r}
+temp <- facility %>%
+  filter(state %in% c("RI") & collection_date == '2022-01-05')
+
+table(temp$critical_staffing_shortage_today)
+table(temp$critical_staffing_shortage_anticipated_within_week)
+
+crit_shortage_hosp <- temp %>%
+  filter(critical_staffing_shortage_today == 'true')
+
+crit_shortage_hosp_week <- temp %>%
+  filter(critical_staffing_shortage_anticipated_within_week == 'true')
+
+crit_shortage_hosp_day_or_week <- temp %>%
+  filter(critical_staffing_shortage_anticipated_within_week == 'true' | critical_staffing_shortage_today == 'true')
+
+```
+
+```{r}
+fname1 <- paste0('2022-01-05_RI_staff_shortage.xlsx')
+
+openxlsx::write.xlsx( 
+              temp %>% select(hospital_name, state, county, zip, hospital_subtype, critical_staffing_shortage_today, critical_staffing_shortage_anticipated_within_week)
+              , fname1 )
+```
+
+
+```{r}
+temp %>% 
+  select(hospital_name
+         , state
+         , county
+         , zip
+         , hospital_subtype
+         , system
+         , critical_staffing_shortage_today
+         , critical_staffing_shortage_anticipated_within_week)
+```
+
+
+COVID admissions are confirmed and suspected
+Hospitalization Rate - LOOKS INCONSISTENT - we are current using confirmed admissions only
+```{r, fig.height=4}
+daily_cases_hosp_rates_full %>%
+  filter(state %in% R1states & date > '2020-09-01') %>%
+  mutate(r = (weekly_all_covid_admissions/lag_cases)*100) %>%
+  filter(r < 200) %>%
+  ggplot(aes(x = date, y = r)) + #, color = state
+    facet_wrap(~ state, ncol = 2) + #scales = 'free_y' - For different axes
+    geom_line(color = "blue", size = 1) +
+    labs(x = NULL, y = 'Percent', title = 'Confirmed and Suspected COVID-19 Hospitalization Rate,\n Weely Average with a 2 week case lag') +
+    scale_x_date(date_breaks = "2 month", date_labels =  "%b-%d-%Y") 
+```

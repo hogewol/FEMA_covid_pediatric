@@ -1,0 +1,265 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+Tools for working with COVID-19 Forecast Hub data: covidHubUtils R package
+http://reichlab.io/covidHubUtils/articles/covidHubUtils-overview.html
+```{r}
+# devtools::install_github("reichlab/zoltr")
+# devtools::install_github("reichlab/covidHubUtils")
+```
+
+
+```{r}
+library(covidHubUtils)
+library(doParallel)
+library(tidyverse)
+
+theme_set(theme_bw() + theme( legend.position="bottom" ) +
+             theme( text = element_text(size=16, face="bold")) +
+            theme(axis.text.x=element_text(angle=60, hjust=1)))
+
+R1states <- c('CT', 'MA', 'ME', 'NH', 'RI', 'VT') # FEMA Region 1
+R1stfips <- c('09', '25', '23', '33', '44', '50') # FIPS of states 
+```
+
+
+CDC ensemble forecasts for hospital admissions - https://github.com/reichlab/covid19-forecast-hub
+
+```{r}
+# Load forecasts that were submitted in a time window from zoltar
+# inc_case_targets <- paste(1:4, "wk ahead inc case")
+# forecasts_case <- load_forecasts(
+#   models = "COVIDhub-ensemble",
+#   dates = "2021-03-08",
+#   date_window_size = 6,
+#   locations = "US",
+#   types = c("point", "quantile"),
+#   targets = inc_case_targets,
+#   source = "zoltar",
+#   verbose = FALSE,
+#   as_of = NULL,
+#   hub = c("US")
+# )
+
+inc_hosp_targets <- paste(0:130, "day ahead inc hosp")
+forecasts_hosp <- load_forecasts(
+  models = "COVIDhub-ensemble",
+  dates = "2022-01-17",
+  date_window_size = 6,
+  locations = R1stfips, #"US",
+  types = c("point", "quantile"),
+  targets = inc_hosp_targets,
+  source = "zoltar",
+  verbose = FALSE,
+  as_of = NULL,
+  hub = c("US")
+)
+
+# inc_death_targets <- paste(1:4, "wk ahead inc death")
+# forecasts_death <- load_forecasts(
+#   models = "COVIDhub-ensemble",
+#   dates = "2021-03-08",
+#   date_window_size = 6,
+#   locations = "US",
+#   types = c("point", "quantile"),
+#   targets = inc_death_targets,
+#   source = "zoltar",
+#   verbose = FALSE,
+#   as_of = NULL,
+#   hub = c("US")
+# )
+```
+HealthData Thruth
+```{r}
+truth_hosp <- load_truth(
+  truth_source = "HealthData",
+  target_variable = "inc hosp",
+  locations = R1stfips # "US"
+)
+```
+```{r}
+df_plot <- bind_rows(
+            truth_hosp
+            , forecasts_hosp %>%
+                filter(type == 'quantile') %>%
+                pivot_wider(names_from = quantile, names_prefix = 'quant', values_from = value)
+      ) %>%
+  filter(target_end_date > "2021-11-01" #& !is.na(quant0.5)
+         )
+```
+
+* POWER POINT Graph *
+
+```{r, fig.height=4}
+plotFcst <- function(tit, df_plot, ylims){
+  brks <- sort(c(seq.Date(as.Date('2020-11-01'), as.Date('2022-02-01'), "1 month"),
+                seq.Date(as.Date('2020-11-15'), as.Date('2022-02-01'), "1 month")))
+ggplot(df_plot, aes(x = target_end_date)) +
+    facet_wrap(~ abbreviation, ncol = 2, scales = 'free_y') + # - For different axes
+    geom_point(aes(y = value, color = "Reported"), size = 1) +
+    scale_color_manual(name = NULL, values = c("blue")) +
+    geom_smooth(aes(y = value), color = "blue", size = 1, span = 0.1, se = FALSE) +
+    geom_ribbon(aes(ymin = quant0.025, ymax = quant0.975, fill = "95% Prediction Interval"), size = 1) +
+    geom_ribbon(aes(ymin = quant0.25, ymax = quant0.75, fill = "50% Prediction Interval"), size = 1) +
+    scale_fill_manual(name = NULL, values = c("salmon3", "salmon1", "orangered4")) +
+    geom_point(aes(y = quant0.5), color = "orangered4", size = 1) +
+    geom_line(aes(y = quant0.5, fill = "Ensemble"), size = 1) +
+    labs(x = NULL, y = 'New Hospital Admissions', title = tit) +
+    expand_limits(y = ylims) +
+    scale_x_date(breaks = brks, date_labels =  "%b %d %Y") +
+    guides(color = guide_legend(order=1),
+         fill = guide_legend(order=2))
+}
+```
+```{r, fig.height=4}
+plotFcst('Daily Hospital Admissions', df_plot, c(0, 100))
+```
+```{r, fig.height=4}
+plotFcst('Daily Hospital Admissions per 100K people', df_plot %>%
+           mutate(value = value / population * 1e5
+                  , quant0.025 = quant0.025 / population * 1e5
+                  , quant0.975 = quant0.975 / population * 1e5
+                  , quant0.25 = quant0.25 / population * 1e5
+                  , quant0.75 = quant0.75 / population * 1e5
+                  , quant0.5 = quant0.5 / population * 1e5)
+         , c(0, 13)) 
+```
+
+# MA ONLY
+```{r, fig.height=2.5}
+df_plot %>% 
+  filter(abbreviation == 'MA') %>%
+  ggplot(aes(x = target_end_date)) +
+    geom_point(aes(y = value, color = "Reported"), size = 1) +
+    scale_color_manual(name = NULL, values = c("blue")) +
+    geom_smooth(aes(y = value), color = "blue", size = 1, span = 0.2, se = FALSE) +
+    geom_ribbon(aes(ymin = quant0.025, ymax = quant0.975, fill = "95% Prediction Interval"), size = 1) +
+    geom_ribbon(aes(ymin = quant0.25, ymax = quant0.75, fill = "50% Prediction Interval"), size = 1) +
+    scale_fill_manual(name = NULL, values = c("salmon3", "salmon1", "orangered4")) +
+    geom_point(aes(y = quant0.5), color = "orangered4", size = 1) +
+    geom_line(aes(y = quant0.5, fill = "Ensemble"), size = 1) +
+    labs(x = NULL, y = 'New Hospital Admissions', title = 'Massachusetts Daily Hospital Admission Forecast \nCDC Ensemble as of Jan 10th') +
+    # expand_limits(y = ylims) +
+    scale_x_date(breaks = sort(c(seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "1 month"),
+                seq.Date(as.Date('2020-11-15'), as.Date('2022-01-15'), "1 month")))
+                , date_labels =  "%b %d %Y") +
+    guides(color = guide_legend(order=1),
+         fill = guide_legend(order=2))
+```
+
+# FOR PPT - HealthData Thruth, daily hospitalizations nationwide
+```{r}
+truth_hosp_US <- load_truth(
+  truth_source = "HealthData",
+  target_variable = "inc hosp",
+  locations = "US"
+)
+```
+```{r}
+truth_hosp_US %>%
+  mutate(hospday100K = value / population * 1e5) %>%
+  slice(tail(row_number(), 7)) %>%
+  select(location, target_end_date, value, hospday100K) 
+```
+```{r}
+truth_hosp_US %>%
+  mutate(hospday100K = value / population * 1e5) %>%
+  slice(tail(row_number(), 7)) %>%
+  select(location, target_end_date, value, hospday100K) %>%
+  summarise(hospday100K = mean(hospday100K))
+
+```
+
+# FOR PPT - JHU Thruth, daily incidence Nationwide
+```{r}
+truth_incidence_R1 <- load_truth(
+  truth_source = "JHU",
+  target_variable = "inc case",
+  locations = R1stfips
+)
+
+truth_incidence_US <- load_truth(
+  truth_source = "JHU",
+  target_variable = "inc case",
+  locations = "US"
+)
+```
+
+```{r}
+truth_incidence_US %>%
+  mutate(incday100K = value / population * 1e5 / 7) %>%
+  filter(target_end_date == max(target_end_date)) %>%
+  select(location, target_end_date, value, incday100K)
+```
+# FOR PPT - JHU Thruth, daily deaths in R1
+```{r}
+truth_death <- load_truth(
+  truth_source = "JHU",
+  target_variable = "inc death",
+  locations = R1stfips
+)
+```
+```{r, fig.height=4}
+truth_death %>%
+  filter(target_end_date > '2020-09-01') %>%
+  mutate(r = value/population * 1e5) %>%
+ggplot(aes(x = target_end_date, y = r)) +
+    facet_wrap(~ abbreviation, ncol = 2) + # , scales = 'free_y' - For different axes
+    geom_point(color = "grey45", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.1, se = FALSE) +
+    labs(x = NULL, y = 'COVID-19 Deaths', title = 'COVID-19 Weekly Deaths per 100K people') +
+    # expand_limits(y = ylims) +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y")
+```
+```{r}
+truth_death %>%
+  filter(target_end_date > '2022-01-05') %>%
+  mutate(r = value/population * 1e5) %>%
+  select(target_end_date, location_name, r)
+```
+## DEATHS PER INCIDENCE
+```{r}
+tmp <- truth_incidence_R1 %>%
+  group_by(location) %>%
+  mutate(incidence_lagged = lag(value, n = 1)) %>%
+  select(location, target_end_date, value, incidence_lagged)
+
+death_rates <- truth_death %>%
+  rename(deaths = value) %>%
+  left_join(tmp, by = c('location', 'target_end_date')) %>%
+  mutate(death_rate = deaths / incidence_lagged)
+```
+
+```{r, fig.height=4}
+death_rates %>%
+  filter(target_end_date > '2020-09-01') %>%
+ggplot(aes(x = target_end_date, y = death_rate)) +
+    facet_wrap(~ abbreviation, ncol = 2) + # , scales = 'free_y' - For different axes
+    geom_point(color = "grey45", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.1, se = FALSE) +
+    labs(x = NULL, y = NULL, title = 'COVID-19 Weekly Deaths per New Cases (with a 2-week case lag)') +
+    # expand_limits(y = ylims) +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels = scales::percent)
+```
+```{r, fig.height=4}
+death_rates %>%
+  filter(target_end_date > '2021-05-01') %>%
+ggplot(aes(x = target_end_date, y = death_rate)) +
+    facet_wrap(~ abbreviation, ncol = 2) + # , scales = 'free_y' - For different axes
+    geom_point(color = "grey45", size = 1) +
+    geom_smooth(color = "blue", size = 1, span = 0.1, se = FALSE) +
+    labs(x = NULL, y = NULL, title = 'COVID-19 Weekly Deaths per New Cases (with a 2-week case lag)') +
+    coord_cartesian(ylim = c(0, 0.04)) +
+    scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y") +
+    scale_y_continuous(labels = scales::percent)
+```
