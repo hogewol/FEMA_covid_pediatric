@@ -27,8 +27,8 @@ theme_set(theme_bw() + theme( legend.position="bottom" ) +
              theme( text = element_text(size=16, face="bold")) +
             theme(axis.text.x=element_text(angle=60, hjust=1)))
 
-R1states <- c('CT', 'MA', 'ME', 'NH', 'RI', 'VT') # FEMA Region 1
-R1stfips <- c('09', '25', '23', '33', '44', '50') # FIPS of states 
+# R1stfips <- c('09', '25', '23', '33', '44', '50') # FIPS of states 
+target_statefips <- c('11','28','37','02', '33', '17')
 ```
 
 
@@ -55,7 +55,7 @@ forecasts_hosp <- load_forecasts(
   models = "COVIDhub-ensemble",
   dates = "2022-01-17",
   date_window_size = 6,
-  locations = R1stfips, #"US",
+  locations = target_statefips, #"US",
   types = c("point", "quantile"),
   targets = inc_hosp_targets,
   source = "zoltar",
@@ -83,7 +83,7 @@ HealthData Thruth
 truth_hosp <- load_truth(
   truth_source = "HealthData",
   target_variable = "inc hosp",
-  locations = R1stfips # "US"
+  locations = target_statefips # "US"
 )
 ```
 ```{r}
@@ -184,7 +184,7 @@ truth_hosp_US %>%
 truth_incidence_R1 <- load_truth(
   truth_source = "JHU",
   target_variable = "inc case",
-  locations = R1stfips
+  locations = target_statefips
 )
 
 truth_incidence_US <- load_truth(
@@ -205,9 +205,23 @@ truth_incidence_US %>%
 truth_death <- load_truth(
   truth_source = "JHU",
   target_variable = "inc death",
-  locations = R1stfips
+  locations = target_statefips
 )
 ```
+# FOR PPT - Incidence Truth
+```{r, fig.height=4}
+# truth_incidence_R1 %>%
+#   filter(target_end_date > '2020-09-01') %>%
+#   mutate(inc100K = value / population * 1e5) %>%
+# ggplot(aes(x = target_end_date, y = inc100K)) +
+#     facet_wrap(~ abbreviation, ncol = 2) + # , scales = 'free_y' - For different axes
+#     geom_point(color = "grey45", size = 1) +
+#     geom_smooth(color = "blue", size = 1, span = 0.1, se = FALSE) +
+#     labs(x = NULL, y = NULL, title = 'COVID-19 Daily Cases per 100K, Weekly Average') +
+#     # expand_limits(y = ylims) +
+#     scale_x_date(breaks = seq.Date(as.Date('2020-11-01'), as.Date('2022-01-01'), "2 month"), date_labels =  "%b %d %Y") 
+```
+
 ```{r, fig.height=4}
 truth_death %>%
   filter(target_end_date > '2020-09-01') %>%
